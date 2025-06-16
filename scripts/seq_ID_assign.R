@@ -7,6 +7,8 @@ library(dplyr)
 library(readr)
 library(tidyverse)
 library(duckdb)
+library(purrr)
+library(glue)
 
 readRenviron("../.Renviron")  #load renviron file here
 
@@ -15,7 +17,7 @@ starLIMS_path <- Sys.getenv("STARLIMS_PATH")
 db_info <- read_tsv(starLIMS_path)
 
 #for now input a list of basespace seq ID's that will be used to query lims 
-basespace_id <- read.csv("../tb_fetch0604.csv")
+basespace_id <- read.csv("../bs_IDs.csv")
 basespace_id <- basespace_id %>%
   mutate(wa_id = sub("-.*", "", bs_id))%>%
   select(-bs_id)#extract only WA id
@@ -29,6 +31,12 @@ lims_con <- DBI::dbConnect(odbc::odbc(),
                       ApplicationIntent = "ReadOnly",
                       timezone = Sys.timezone(),
                       timezone.out = Sys.timezone())
+
+# code block to perform a search across all tables for specific WA ID
+# source("search_tables.R")
+# wa_id <- "WA0123456"
+# results <- search_lims_tables(wa_id)
+# print(results)
 
 #query 
 results <- basespace_id %>%
@@ -74,7 +82,7 @@ assign_anon_ids <- function(results, db_path) {
           year <- year(as.Date(SpecimenDateCollected))
           repeat {
             rand_num <- sprintf("%06d", sample(1e6, 1))
-            new_anon_id <- paste0("Mtb/Homo sapiens/USA/WA-PHL-", rand_num, "/", year)
+            new_anon_id <- paste0("WAPHL/Homo sapiens/USA/WA-PHL-", rand_num, "/", year)
             
             # Check if random ID is already used
             existing <- dbGetQuery(con, paste0(
