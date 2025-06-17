@@ -62,5 +62,14 @@ assign_anon_ids <- function(results, db_path) {
 #call the function to assign ID's 
 results <- assign_anon_ids(results, db_path)
 view(results)
+anon_df_clean <- results %>%
+  select(-wa_id) %>%
+  mutate(
+    export_timestamp = Sys.time()
+  )
+
+csv_filename <- file.path(Sys.getenv("EXPORT_PATH"), paste0("anon_metadata_", Sys.Date(), ".csv"))
+write.csv(anon_df_clean, csv_filename, row.names = FALSE)
+cat("Exported to:", csv_filename, "\n")
 
 #delete rds file?
