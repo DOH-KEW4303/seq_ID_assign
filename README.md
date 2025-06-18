@@ -14,4 +14,4 @@ Randomized sequencing ID's are generated and written to a DuckDB database file. 
 Sample metadata files necessary for upload to NCBI are generated and stored (in an s3 bucket? wherever makes sense for binfx)
 
 ## Requirements 
-Currently the tool is being developed in R/Rstudio. User needs to be connected to internal VPN and have access credentials to starLIMS. 
+Currently the tool is being developed in R/Rstudio. User needs to be connected to internal VPN and have access to the secure location of the DuckDB file.
