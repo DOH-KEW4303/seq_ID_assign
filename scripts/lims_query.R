@@ -18,10 +18,10 @@ db_info <- read_tsv(starLIMS_path)
 secure_path <- Sys.getenv("SECURE_PATH")
 
 #for now input a list of basespace seq ID's that will be used to query lims 
-basespace_id <- read.csv("../tb_fetch0604.csv")
+basespace_id <- read.csv("../bs_IDs.csv")
 basespace_id <- basespace_id %>%
   mutate(wa_id = sub("-.*", "", bs_id))%>%
-  select(-bs_id)#extract only WA id
+  select(wa_id, descriptor)
 
 # Connection
 lims_con <- DBI::dbConnect(odbc::odbc(),
@@ -59,7 +59,7 @@ results<- results %>%
          "country" = PatientAddressCountry,
          "collected_by" = SubmitterName)
 
-#print(results)
+print(results)
 
 # Save results for use in duckDB and metadata scripts 
 saveRDS(results, file = file.path(secure_path, "lims_query_results.rds"))
