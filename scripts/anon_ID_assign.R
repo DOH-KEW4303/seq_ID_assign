@@ -16,7 +16,8 @@ assign_anon_ids <- function(results, db_path) {
     CREATE TABLE IF NOT EXISTS anon_ids (
       wa_id TEXT PRIMARY KEY,
       anon_id TEXT,
-      collection_date INTEGER
+      collection_date INTEGER,
+      descriptor TEXT
     )
   ")
   # Loop through results df and assign anon_id if not already in DB
@@ -24,6 +25,10 @@ assign_anon_ids <- function(results, db_path) {
     rowwise() %>%
     mutate(
       anon_id = {
+        if (any(is.na(c(wa_id, collection_date, descriptor)))) {
+          warning(paste("Skipping row due to missing required value:", wa_id))
+          return(NA_character_)
+        }
         existing_id <- dbGetQuery(con, paste0(
           "SELECT anon_id FROM anon_ids WHERE wa_id = '", wa_id, "'"
         ))
@@ -31,11 +36,21 @@ assign_anon_ids <- function(results, db_path) {
         if (nrow(existing_id) > 0) {
           existing_id$anon_id
         } else {
-          # Generate new ID
+          # extract year
           year <- year(as.Date(collection_date))
+          #try until we get a unique wa ID
           repeat {
-            rand_num <- sprintf("%06d", sample(1e6, 1))
-            new_anon_id <- paste0("WAPHL/Homo sapiens/USA/WA-PHL-", rand_num, "/", year)
+            rand_num <- sprintf("%06d", sample(1e6, 1)) #generate padded 6 digit no 
+            #create IDs
+            new_anon_id <- case_when(
+              descriptor == "influenza A" ~paste0("FluA/Human/USA/WA-PHL-", rand_num, "/", year),
+              descriptor == "influenza B" ~paste0("FluB/Human/USA/WA-PHL-", rand_num, "/", year),
+              descriptor == "cov2" ~paste0("hCov/Human/USA/WA-PHL-", rand_num, "/", year),
+              descriptor %in% c("salmonella", "shigella") ~paste0("PulseNet/Human/USA/WA-PHL-", rand_num, "/", year),
+              descriptor == "wastewater" ~paste0("WW/Metagenomic/USA/WA-PHL-", rand_num, "/", year),
+              TRUE ~paste0("WAPHL/Human/USA/WA-PHL-", rand_num, "/", year)
+           )
+            
             
             # Check if random ID is already used
             existing <- dbGetQuery(con, paste0(
@@ -44,8 +59,9 @@ assign_anon_ids <- function(results, db_path) {
             
             if (nrow(existing) == 0) {
               # Insert into DuckDB
-              dbExecute(con, "INSERT INTO anon_ids (wa_id, anon_id, collection_date) VALUES (?, ?, ?)", 
-                        params = list(wa_id, new_anon_id, year))
+              dbExecute(con, "INSERT INTO anon_ids (wa_id, anon_id, collection_date, descriptor) VALUES (?, ?, ?, ?)", 
+                        params = list(wa_id, new_anon_id, year, descriptor)
+              )
               break
             }
           }
