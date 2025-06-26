@@ -1,37 +1,46 @@
 #################################
 #Reads in rds file with lims query results, connects to duckdb and executes function to assign random identifier to wach WA record. writes to duckdb file on the y drive. 
-
+library(DBI)
+library(duckdb)
+library(dplyr)
+library(lubridate)
 
 # read in rds file with lims query results, Get path from .Renviron for duckdb file and lock file 
 results <- readRDS(file = file.path(secure_path, "lims_query_results.rds"))
 db_path <- Sys.getenv("DUCKDB_PATH")
 lock_path <- Sys.getenv("LOCK_PATH")
 
-#check for exisiting lock file and display info if present
-if(file.exists(lock_path)) {
+#define function-check for exisiting lock file and display info if present
+check_and_create_lock <-function(lock_path) {
+  if(file.exists(lock_path)) {
   lock_info <- readLines(lock_path, warn = FALSE)
   stop(paste0(
     "The database file is currently locked / in use.\n",
     "Locked by:" , lock_info[1], "\n",
     "since: ", lock_info[2], "\n",
-    "Try again later."
-    ))
-}
-#create the user and timestamp info for lock
-lock_info <- c(Sys.info()[["user"]], as.character(Sys.time()))
-writeLines(lock_info, lock_path)
-
-#remove lock file after process is finished
-on.exit({
-  if (file.exists(lock_path)) {
-    file.remove(lock_path)
+    "Try again later."))
   }
-}, add = TRUE)
+  
+  #create the user and timestamp info for lock
+  lock_info <- c(Sys.info()[["user"]], as.character(Sys.time()))
+  writeLines(lock_info, lock_path)
+}
 
 # Create/connect to the DuckDB file and create table and write function to assign ID's 
-assign_anon_ids <- function(results, db_path) {
+assign_anon_ids <- function(results, db_path, lock_path) {
+  check_and_create_lock(lock_path)
+  
+  #remove lock file after process is finished
+  on.exit({
+    if (file.exists(lock_path)) {
+      file.remove(lock_path)
+    }
+  }, add = TRUE)
+  
   # Connect to duckdb (read-only = FALSE because we're inserting)
   con <- dbConnect(duckdb::duckdb(), dbdir = db_path, read_only = FALSE)
+  
+  
   
   # Create table if it doesn't exist yet (ours will already exist)
   dbExecute(con, "
@@ -42,7 +51,8 @@ assign_anon_ids <- function(results, db_path) {
       descriptor TEXT
     )
   ")
-  # check first for WA ID if record already exists (avoids assigning a new anon ID to the same WA ID)
+  # check first for WA ID if record already exists (avoids assigning a new anon ID to the same WA ID) and if not assign the anon ID to the new WA
+  results <- results %>%
     rowwise() %>%
     mutate(
       anon_id = {
@@ -97,19 +107,21 @@ assign_anon_ids <- function(results, db_path) {
   return(results)
 }
 
-#call the function  
-results <- assign_anon_ids(results, db_path)
-view(results)
 
-#drop the WA ID to create a df that can be exported to use for NCBI upload 
-anon_df_clean <- results %>%
-  select(-wa_id) %>%
-  mutate(
-    export_timestamp = Sys.time()
-  )
+#function to drop the WA ID to create a df that can be exported to use for NCBI upload 
+export_metadata <- function(results) {
+  anon_id_clean <- results %>%
+    select(-wa_id) %>%
+    mutate(export_timestamp = Sys.time())
 
 csv_filename <- file.path(Sys.getenv("EXPORT_PATH"), paste0("anon_metadata_", Sys.Date(), ".csv"))
-write.csv(anon_df_clean, csv_filename, row.names = FALSE)
+write.csv(anon_id_clean, csv_filename, row.names = FALSE)
 cat("Exported to:", csv_filename, "\n")
 
+}
+
+#execute functions
+results <- assign_anon_ids(results, db_path, lock_path)
+view(results)
+export_metadata(results)
 #delete rds file?
