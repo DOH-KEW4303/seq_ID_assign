@@ -75,12 +75,13 @@ assign_anon_ids <- function(results, db_path, lock_path) {
             print(rand_num)
             #create IDs
             new_anon_id <- case_when(
-              descriptor == "influenza A" ~paste0("FluA/Human/USA/WA-PHL-", rand_num, "/", year),
-              descriptor == "influenza B" ~paste0("FluB/Human/USA/WA-PHL-", rand_num, "/", year),
-              descriptor == "cov2" ~paste0("hCov/Human/USA/WA-PHL-", rand_num, "/", year),
-              descriptor %in% c("salmonella", "shigella") ~paste0("PulseNet/Human/USA/WA-PHL-", rand_num, "/", year),
+              descriptor == "influenza A" ~paste0("hFluA/Human/USA/WA-PHL-", rand_num, "/", year), #will need to adapt for each segment here and in Basespace
+              descriptor == "influenza B" ~paste0("hFluB/Human/USA/WA-PHL-", rand_num, "/", year),
+              descriptor == "cov2" ~paste0("hCov2/Human/USA/WA-PHL-", rand_num, "/", year),
+              descriptor == "RSV A" ~paste0("hRSvA/Human/USA/WA-PHL-", rand_num, "/", year),
+              descriptor %in% c("salmonella", "shigella", "e.coli") ~paste0("PulseNet/Human/USA/WA-PHL-", rand_num, "/", year),
               descriptor == "wastewater" ~paste0("WW/Metagenomic/USA/WA-PHL-", rand_num, "/", year),
-              TRUE ~paste0("WAPHL/Human/USA/WA-PHL-", rand_num, "/", year)
+              #TRUE ~paste0("WAPHL/Human/USA/WA-PHL-", rand_num, "/", year)
            )
             
             
