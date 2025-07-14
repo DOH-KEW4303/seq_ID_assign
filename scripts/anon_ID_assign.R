@@ -10,6 +10,14 @@ results <- readRDS(file = file.path(secure_path, "lims_query_results.rds"))
 db_path <- Sys.getenv("DUCKDB_PATH")
 lock_path <- Sys.getenv("LOCK_PATH")
 
+#define function to log warning and error messages
+log_message <- function(message, log_path = "anon_id_assignment.log") {
+  timestamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+  full_msg <- paste0("[", timestamp, "] ", message, "\n")
+  cat(full_msg, file = log_path, append = TRUE)
+}
+
+
 #define function-check for exisiting lock file and display info if present
 check_and_create_lock <-function(lock_path) {
   if(file.exists(lock_path)) {
@@ -51,54 +59,86 @@ assign_anon_ids <- function(results, db_path, lock_path) {
       descriptor TEXT
     )
   ")
-  # check first for WA ID if record already exists (avoids assigning a new anon ID to the same WA ID) and if not assign the anon ID to the new WA
+  # Define descriptor-to-prefix mapping 
+  descriptor_prefixes <- list(
+    "influenza A" = "hFluA",
+    "influenza B" = "hFluB",
+    "cov2" = "hCov2",
+    "Corynebacterium_diphtheriae" = "Cdiph",
+    "Measles_virus" = "hMV",
+    "mpox" = "hMPV",
+    "Respiratory_syncytial_virusA" = "hRSvA",
+    "Respiratory_syncytial_virusB" = "hRSVB",
+    "Staphylococcus_aureus" = "staphA",
+    "wastewater" = "WW/Metagenomic",
+    "salmonella_enterica" = "PulseNet",
+    "Shigella" = "PulseNet",
+    "Escherichia_coli" = "PulseNet",
+    "Camplylocbacter" = "PulseNet",
+    "Listeria_monocytoge" = "PulseNet"
+  )
+  # check first for WA ID if record already exists in db. if not assign the new anon ID to the new WA ID. 
   results <- results %>%
     rowwise() %>%
     mutate(
       anon_id = {
-        if (any(is.na(c(wa_id, collection_date, descriptor)))) {
-          warning(paste("Skipping row due to missing required value:", wa_id))
-          return(NA_character_)
-        }
-        existing_id <- dbGetQuery(con, paste0(
+        if (any(c(
+          is.na(wa_id), wa_id == "",
+          is.na(collection_date), collection_date == "",
+          is.na(descriptor), descriptor == ""
+        ), na.rm = TRUE)) {
+          msg <- paste("Skipping row due to missing required value for:", wa_id)
+          warning(msg)
+          log_message(msg)
+          NA_character_
+          
+        } else {
+          existing_id <- dbGetQuery(con, paste0(
           "SELECT anon_id FROM anon_ids WHERE wa_id = '", wa_id, "'"
         ))
         
-        if (nrow(existing_id) > 0) {
-          existing_id$anon_id
-        } else {
+          if (nrow(existing_id) > 0) {
+           msg <- paste("WA ID already exists in database:", wa_id, "→ using existing anon_id:", existing_id$anon_id)
+           warning(msg)
+           log_message(msg)
+           existing_id$anon_id
+           
+        }  else {
           # extract year
           year <- year(as.Date(collection_date))
+          new_anon_id <- NA_character_
+          
           #try until we get a unique anon ID
           repeat {
             rand_num <- sprintf("%06d", sample(1e6, 1)) #generate padded 6 digit no 
-            print(rand_num)
-            #create IDs
-            new_anon_id <- case_when(
-              descriptor == "influenza A" ~paste0("hFluA/Human/USA/WA-PHL-", rand_num, "/", year), #will need to adapt for each segment here and in Basespace
-              descriptor == "influenza B" ~paste0("hFluB/Human/USA/WA-PHL-", rand_num, "/", year),
-              descriptor == "cov2" ~paste0("hCov2/Human/USA/WA-PHL-", rand_num, "/", year),
-              descriptor == "RSV A" ~paste0("hRSvA/Human/USA/WA-PHL-", rand_num, "/", year),
-              descriptor %in% c("salmonella", "shigella", "e.coli") ~paste0("PulseNet/Human/USA/WA-PHL-", rand_num, "/", year),
-              descriptor == "wastewater" ~paste0("WW/Metagenomic/USA/WA-PHL-", rand_num, "/", year),
-              #TRUE ~paste0("WAPHL/Human/USA/WA-PHL-", rand_num, "/", year)
-           )
+            prefix <- descriptor_prefixes[[descriptor]]
             
+            if (is.null(prefix)) {
+              msg <- paste("Unknown pathogen descriptor for WA ID:", wa_id, "-", descriptor, "→ skipping row.")
+              warning(msg)
+              log_message(msg)
+              new_anon_id <- NA_character_
+              break
+            }
             
-            # ensure that the anon ID doesn't accidentally match another ID already in db 
+            new_anon_id <- paste0(prefix, "/Human/USA/WA-PHL-", rand_num, "/", year)
+            
+            # ensure that the new anon ID doesn't accidentally match another ID already in 
             existing <- dbGetQuery(con, paste0(
               "SELECT 1 FROM anon_ids WHERE anon_id = '", new_anon_id, "'"
             ))
             
             if (nrow(existing) == 0) {
               # Insert new identifier into DuckDB
-              dbExecute(con, "INSERT INTO anon_ids (wa_id, anon_id, collection_date, descriptor) VALUES (?, ?, ?, ?)", 
+              dbExecute(con, "INSERT INTO anon_ids (wa_id, anon_id, collection_date, descriptor) VALUES (?, ?, ?, ?)",
                         params = list(wa_id, new_anon_id, year, descriptor)
               )
               break
             }
           }
+          
           new_anon_id
+          }
         }
       }
     ) %>%
