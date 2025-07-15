@@ -11,10 +11,13 @@ db_path <- Sys.getenv("DUCKDB_PATH")
 lock_path <- Sys.getenv("LOCK_PATH")
 
 #define function to log warning and error messages
-log_message <- function(message, log_path = "anon_id_assignment.log") {
+if (!dir.exists("logs")) dir.create("logs")
+log_file <- file.path("logs", paste0("anon_id_assignment_", format(Sys.time(), "%Y-%m-%d_%H-%M-%S"), ".log"))
+
+log_message <- function(message) {
   timestamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
   full_msg <- paste0("[", timestamp, "] ", message, "\n")
-  cat(full_msg, file = log_path, append = TRUE)
+  cat(full_msg, file = log_file, append = TRUE)
 }
 
 
