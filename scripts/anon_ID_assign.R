@@ -59,7 +59,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
       wa_id TEXT PRIMARY KEY,
       anon_id TEXT,
       collection_date INTEGER,
-      descriptor TEXT
+      Description TEXT
     )
   ")
   # Define descriptor-to-prefix mapping 
@@ -74,7 +74,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
     "Respiratory_syncytial_virusB" = "hRSVB",
     "Staphylococcus_aureus" = "staphA",
     "wastewater" = "WW/Metagenomic",
-    "salmonella_enterica" = "PulseNet",
+    "Salmonella_enterica" = "PulseNet",
     "Shigella" = "PulseNet",
     "Escherichia_coli" = "PulseNet",
     "Camplylocbacter" = "PulseNet",
@@ -88,7 +88,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
         if (any(c(
           is.na(wa_id), wa_id == "",
           is.na(collection_date), collection_date == "",
-          is.na(descriptor), descriptor == ""
+          is.na(Description), Description == ""
         ), na.rm = TRUE)) {
           msg <- paste("Skipping row due to missing required value for:", wa_id)
           warning(msg)
@@ -114,10 +114,10 @@ assign_anon_ids <- function(results, db_path, lock_path) {
           #try until we get a unique anon ID
           repeat {
             rand_num <- sprintf("%06d", sample(1e6, 1)) #generate padded 6 digit no 
-            prefix <- descriptor_prefixes[[descriptor]]
+            prefix <- descriptor_prefixes[[Description]]
             
             if (is.null(prefix)) {
-              msg <- paste("Unknown pathogen descriptor for WA ID:", wa_id, "-", descriptor, "→ skipping row.")
+              msg <- paste("Unknown pathogen descriptor for WA ID:", wa_id, "-", Description, "→ skipping row.")
               warning(msg)
               log_message(msg)
               new_anon_id <- NA_character_
@@ -133,8 +133,8 @@ assign_anon_ids <- function(results, db_path, lock_path) {
             
             if (nrow(existing) == 0) {
               # Insert new identifier into DuckDB
-              dbExecute(con, "INSERT INTO anon_ids (wa_id, anon_id, collection_date, descriptor) VALUES (?, ?, ?, ?)",
-                        params = list(wa_id, new_anon_id, year, descriptor)
+              dbExecute(con, "INSERT INTO anon_ids (wa_id, anon_id, collection_date, Description) VALUES (?, ?, ?, ?)",
+                        params = list(wa_id, new_anon_id, year, Description)
               )
               break
             }
