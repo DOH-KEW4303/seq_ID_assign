@@ -3,11 +3,7 @@
 #load libraries 
 library(DBI)
 library(odbc)  
-library(dplyr)
-library(readr)
 library(tidyverse)
-library(duckdb)
-library(purrr)
 library(glue)
 
 readRenviron("../.Renviron")  #load renviron file here
@@ -17,11 +13,35 @@ starLIMS_path <- Sys.getenv("STARLIMS_PATH")
 db_info <- read_tsv(starLIMS_path)
 secure_path <- Sys.getenv("SECURE_PATH")
 
-#for now input a list of basespace seq ID's that will be used to query lims 
-basespace_id <- read.csv("../bs_IDs.csv")
-basespace_id <- basespace_id %>%
-  mutate(wa_id = sub("-.*", "", bs_id))%>%
-  select(wa_id, descriptor)
+#read lines to get the data section only of wonky samplesheet formatting
+read_samplesheet_data <- function(file_path) {
+  lines <- readLines(file_path)
+  data_start <- grep("^\\[Data\\]", lines)
+  if (length(data_start) == 0) {
+    warning(paste("No [Data] section found in", file_path))
+    return(NULL)
+  }
+  
+  data_lines <- lines[(data_start + 1):length(lines)]
+  read.csv(text = paste(lines[(data_start + 1):length(lines)], collapse = "\n"), stringsAsFactors = FALSE)
+}
+
+
+samplesheet_dir <- "C:/Users/kew4303/data/seq_ID_assign/scripts/samplesheets"
+samplesheet_files <- list.files(
+  path = samplesheet_dir, 
+  pattern = "^SampleSheet_.*\\.csv$", 
+  full.names = TRUE
+  )
+samplesheets.df <-do.call(
+  rbind, 
+  lapply(samplesheet_files, read_samplesheet_data)
+  )
+head(samplesheets.df)
+
+samplesheets.df <- samplesheets.df%>%
+  mutate(wa_id = sub("-.*", "", Sample_ID))%>%
+  select(wa_id, Description)
 
 # Connection
 lims_con <- DBI::dbConnect(odbc::odbc(),
@@ -33,14 +53,8 @@ lims_con <- DBI::dbConnect(odbc::odbc(),
                       timezone = Sys.timezone(),
                       timezone.out = Sys.timezone())
 
-# code block to perform a search across all tables for specific WA ID
-# source("search_tables.R")
-# wa_id <- "WA0123456"
-# results <- search_lims_tables(wa_id)
-# print(results)
-
 #query 
-results <- basespace_id %>%
+results <- samplesheets.df %>%
   mutate(lims_info = map(wa_id, function(id) {
     sql_query <- paste0(
       "SELECT TOP 1 SpecimenDateCollected, SpecimenSource, PatientAddressCountry, PatientAddressState, PatientAddressCounty, SubmitterName ",
