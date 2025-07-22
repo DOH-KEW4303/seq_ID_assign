@@ -27,7 +27,7 @@ read_samplesheet_data <- function(file_path) {
 }
 
 
-samplesheet_dir <- "C:/Users/kew4303/data/seq_ID_assign/scripts/samplesheets"
+samplesheet_dir <- "../samplesheets"
 samplesheet_files <- list.files(
   path = samplesheet_dir, 
   pattern = "^SampleSheet_.*\\.csv$", 
