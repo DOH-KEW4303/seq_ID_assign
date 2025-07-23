@@ -3,13 +3,9 @@
 PS4='+ '  # Prevent verbose __git_ps1 noise
 
 
-source "../secrets/env_vars.sh"
-echo "Token: $ACCESS_TOKEN"
-echo "Server: $API_SERVER"
-
-
 # Create output folder if it doesn't exist
-output_dir="../samplesheets"
+output_dir="samplesheets"
+mkdir -p "$output_dir"
 
 # Fetch list of sequencing runs from the last 10 days (adjust as needed)
 run_ids=$(bs list run --access-token "$ACCESS_TOKEN" --api-server "$API_SERVER" -f json | \
