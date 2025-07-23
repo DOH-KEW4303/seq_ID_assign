@@ -6,7 +6,7 @@ library(odbc)
 library(tidyverse)
 library(glue)
 
-readRenviron("../.Renviron")  #load renviron file here
+#readRenviron("../.Renviron")  #load renviron file here
 
 # Credentials
 starLIMS_path <- Sys.getenv("STARLIMS_PATH")
