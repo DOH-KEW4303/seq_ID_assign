@@ -4,11 +4,28 @@ library(DBI)
 library(duckdb)
 library(dplyr)
 library(lubridate)
+library(arrow)
+library(fs)
 
 # read in rds file with lims query results, Get path from .Renviron for duckdb file and lock file 
-results <- readRDS(file = file.path(secure_path, "lims_query_results.rds"))
+secure_path <- Sys.getenv("SECURE_PATH")
 db_path <- Sys.getenv("DUCKDB_PATH")
 lock_path <- Sys.getenv("LOCK_PATH")
+results <- readRDS(file = file.path(secure_path, "lims_query_results.rds"))
+
+
+#define function to create timestamped snapshots to parquet file
+snapshot_dir <- file.path(secure_path, "snapshots")
+snapshot_to_parquet <- function(df, base_name = "anon_id_snapshot", output_dir = snapshot_dir) {
+  dir_create(output_dir)  # Make sure the snapshots folder exists
+  timestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+  file_name <- paste0(base_name, "_", timestamp, ".parquet")
+  file_path <- path(output_dir, file_name)
+  
+  write_parquet(df, file_path)
+  message("Snapshot written to: ", file_path)
+  return(file_path)
+}
 
 #define function to log warning and error messages
 if (!dir.exists("logs")) dir.create("logs")
@@ -78,7 +95,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
     "Shigella" = "PulseNet",
     "Escherichia_coli" = "PulseNet",
     "Camplylocbacter" = "PulseNet",
-    "Listeria_monocytoge" = "PulseNet"
+    "Listeria_monocytogenes" = "PulseNet"
   )
   # check first for WA ID if record already exists in db. if not assign the new anon ID to the new WA ID. 
   results <- results %>%
@@ -166,6 +183,7 @@ cat("Exported to:", csv_filename, "\n")
 
 #execute functions
 results <- assign_anon_ids(results, db_path, lock_path)
+snapshot_to_parquet(results, output_dir = snapshot_dir)
 view(results)
 export_metadata(results)
 #delete rds file?
