@@ -76,14 +76,14 @@ assign_anon_ids <- function(results, db_path, lock_path) {
       wa_id TEXT PRIMARY KEY,
       anon_id TEXT,
       collection_date INTEGER,
-      Description TEXT
+      pathogen TEXT
     )
   ")
   # Define descriptor-to-prefix mapping 
   descriptor_prefixes <- list(
     "Influenza A" = "FluA",
     "Influenza B" = "FluB",
-    "SARS-CoV-2" = "SARS-Cov-2",
+    "SARS-Cov-2" = "SARS-Cov-2",
     "Corynebacterium_diphtheriae" = "Cdiph",
     "Measles" = "hMV",
     "Mumps" = "MuV",
@@ -107,13 +107,14 @@ assign_anon_ids <- function(results, db_path, lock_path) {
   )
   # check first for WA ID if record already exists in db. if not assign the new anon ID to the new WA ID. 
   results <- results %>%
+    rename(pathogen = Description) %>%
     rowwise() %>%
     mutate(
       anon_id = {
         if (any(c(
           is.na(wa_id), wa_id == "",
           is.na(collection_date), collection_date == "",
-          is.na(Description), Description == ""
+          is.na(pathogen), pathogen == ""
         ), na.rm = TRUE)) {
           msg <- paste("Skipping row due to missing required value for:", wa_id)
           warning(msg)
@@ -139,17 +140,17 @@ assign_anon_ids <- function(results, db_path, lock_path) {
           #try until we get a unique anon ID
           repeat {
             rand_num <- sprintf("%06d", sample(1e6, 1)) #generate padded 6 digit no 
-            prefix <- descriptor_prefixes[[Description]]
+            prefix <- descriptor_prefixes[[pathogen]]
             
             if (is.null(prefix)) {
-              msg <- paste("Unknown pathogen descriptor for WA ID:", wa_id, "-", Description, "→ skipping row.")
+              msg <- paste("Unknown pathogen descriptor for WA ID:", wa_id, "-", pathogen, "→ skipping row.")
               warning(msg)
               log_message(msg)
               new_anon_id <- NA_character_
               break
             }
             
-            new_anon_id <- paste0(prefix, "/Human/USA/WA-PHL-", rand_num, "/", year)
+            new_anon_id <- paste0(prefix, "/Human/USA/WAPHL-", rand_num, "/", year)
             
             # ensure that the new anon ID doesn't accidentally match another ID already in 
             existing <- dbGetQuery(con, paste0(
@@ -158,8 +159,8 @@ assign_anon_ids <- function(results, db_path, lock_path) {
             
             if (nrow(existing) == 0) {
               # Insert new identifier into DuckDB
-              dbExecute(con, "INSERT INTO anon_ids (wa_id, anon_id, collection_date, Description) VALUES (?, ?, ?, ?)",
-                        params = list(wa_id, new_anon_id, year, Description)
+              dbExecute(con, "INSERT INTO anon_ids (wa_id, anon_id, collection_date, pathogen) VALUES (?, ?, ?, ?)",
+                        params = list(wa_id, new_anon_id, year, pathogen)
               )
               break
             }
@@ -171,7 +172,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
       }
     ) %>%
     ungroup()
-  
+  dbExecute(con, "CHECKPOINT")
   dbDisconnect(con)
   return(results)
 }
@@ -184,13 +185,13 @@ export_metadata <- function(results) {
     rename(sample_name = anon_id) %>%
     mutate(ncbi_bioproject = "PRJNA288601",
            title = NA_character_,
-           description = NA_character_,
+           pathogen = NA_character_,
            authors = "list of AMD wet and dry lab plus Philip?",
            submitting_lab = "Washington State Department of Health Public Health Laboratories",
            submitting_lab_division = "Division of Disease Control & Health Statistics",
            isolate = sample_name,
            host_disease = NA_character_,
-           organism = Description,
+           organism = pathogen,
            lat_long = NA_character_,
            source_type = NA_character_,
            strain = NA_character_,
