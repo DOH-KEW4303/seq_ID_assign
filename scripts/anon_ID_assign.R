@@ -6,12 +6,22 @@ library(dplyr)
 library(lubridate)
 library(arrow)
 library(fs)
+library(stringr)
 
-# read in rds file with lims query results, Get path from .Renviron for duckdb file and lock file 
+# load paths from Renviron and read .rds file 
 secure_path <- Sys.getenv("SECURE_PATH")
-db_path <- Sys.getenv("DUCKDB_PATH")
-lock_path <- Sys.getenv("LOCK_PATH")
 results <- readRDS(file = file.path(secure_path, "lims_query_results.rds"))
+
+# Determine environment and load appropriate paths. defaults to DEV if not specified 
+run_env <- Sys.getenv("RUN_ENV", unset = "DEV")
+
+if (run_env == "PROD") {
+  db_path <- Sys.getenv("DUCKDB_PATH_PROD")
+  lock_path <- Sys.getenv("LOCK_PATH_PROD")
+} else {
+  db_path <- Sys.getenv("DUCKDB_PATH_DEV")
+  lock_path <- Sys.getenv("LOCK_PATH_DEV")
+}
 
 
 #define function to create timestamped snapshots to parquet file
@@ -76,36 +86,60 @@ assign_anon_ids <- function(results, db_path, lock_path) {
       wa_id TEXT PRIMARY KEY,
       anon_id TEXT,
       collection_date INTEGER,
-      Description TEXT
+      pathogen TEXT
     )
   ")
   # Define descriptor-to-prefix mapping 
   descriptor_prefixes <- list(
-    "influenza A" = "hFluA",
-    "influenza B" = "hFluB",
-    "cov2" = "hCov2",
-    "Corynebacterium_diphtheriae" = "Cdiph",
-    "Measles_virus" = "hMV",
-    "mpox" = "hMPV",
-    "Respiratory_syncytial_virusA" = "hRSvA",
-    "Respiratory_syncytial_virusB" = "hRSVB",
+    "Influenza A" = "FluA",
+    "Influenza B" = "FluB",
+    "SARS-CoV-2" = "CoV2",
+    "Corynebacterium_diphtheriae" = "cDiph",
+    "Corynebacterium_ulcerans" = "cUlcerans",
+    "Measles" = "hMV",
+    "Mumps" = "MuV",
+    "Adenovirus" = "HAdV",
+    "HIV" = "hIV",
+    "Hepatitis B" = "HepBV",
+    "Zika" = "ZikaV",
+    "WNV" = "WNV",
+    "Dengue" = "DenV",
+    "Mpox" = "MpoxV",
+    "RSV-A" = "RSvA",
+    "RSV-B" = "RSVB",
+    "HSV" = "HSV",
+    "Mycobacterium_tuberculosis" = "Mtb",
     "Staphylococcus_aureus" = "staphA",
-    "wastewater" = "WW/Metagenomic",
     "Salmonella_enterica" = "PulseNet",
     "Shigella" = "PulseNet",
     "Escherichia_coli" = "PulseNet",
-    "Camplylocbacter" = "PulseNet",
-    "Listeria_monocytogenes" = "PulseNet"
+    "Camplyocbacter_jejuni" = "PulseNet",
+    "Listeria_monocytogenes" = "PulseNet",
+    "Vibrio" = "PulseNet",
+    "Vibrio_cholerae" ="PulseNet"
   )
+  
+  
+  
   # check first for WA ID if record already exists in db. if not assign the new anon ID to the new WA ID. 
   results <- results %>%
+    rename(pathogen = Description) %>%
     rowwise() %>%
     mutate(
       anon_id = {
-        if (any(c(
+        if (!is.na(isolation_source) && 
+            grepl("^Raw\\s*Wastewater\\s*(Composite|Grab)$",
+                  isolation_source, ignore.case = TRUE)) {
+          msg <- paste("Skipping WA ID due to excluded isolation_source:",
+                       wa_id, "-", isolation_source)
+          warning(msg)
+          log_message(msg)
+          NA_character_
+          
+        } else if (any(c(
           is.na(wa_id), wa_id == "",
           is.na(collection_date), collection_date == "",
-          is.na(Description), Description == ""
+          is.na(pathogen), pathogen == ""
         ), na.rm = TRUE)) {
           msg <- paste("Skipping row due to missing required value for:", wa_id)
           warning(msg)
@@ -131,10 +165,10 @@ assign_anon_ids <- function(results, db_path, lock_path) {
           #try until we get a unique anon ID
           repeat {
             rand_num <- sprintf("%06d", sample(1e6, 1)) #generate padded 6 digit no 
-            prefix <- descriptor_prefixes[[Description]]
+            prefix <- descriptor_prefixes[[pathogen]]
             
             if (is.null(prefix)) {
-              msg <- paste("Unknown pathogen descriptor for WA ID:", wa_id, "-", Description, "→ skipping row.")
+              msg <- paste("Unknown pathogen descriptor for WA ID:", wa_id, "-", pathogen, "→ skipping row.")
               warning(msg)
               log_message(msg)
               new_anon_id <- NA_character_
@@ -150,8 +184,8 @@ assign_anon_ids <- function(results, db_path, lock_path) {
             
             if (nrow(existing) == 0) {
               # Insert new identifier into DuckDB
-              dbExecute(con, "INSERT INTO anon_ids (wa_id, anon_id, collection_date, Description) VALUES (?, ?, ?, ?)",
-                        params = list(wa_id, new_anon_id, year, Description)
+              dbExecute(con, "INSERT INTO anon_ids (wa_id, anon_id, collection_date, pathogen) VALUES (?, ?, ?, ?)",
+                        params = list(wa_id, new_anon_id, year, pathogen)
               )
               break
             }
@@ -163,51 +197,60 @@ assign_anon_ids <- function(results, db_path, lock_path) {
       }
     ) %>%
     ungroup()
-  
+  dbExecute(con, "CHECKPOINT")
   dbDisconnect(con)
   return(results)
 }
 
 
-#function to drop the WA ID to create a df that can be exported to use for NCBI upload 
+#function to drop the WA ID, PN organisms, Mtb, to create a df that can be exported to use for NCBI upload 
 export_metadata <- function(results) {
-  anon_id_clean <- results %>%
+  excluded_sources <- c("Raw Wastewater Composite", "Raw Wastewater Grab")
+  
+  results_filtered <- results %>% 
+    filter(!is.na(anon_id) & anon_id != "") %>%
+    filter(!grepl("PulseNet", anon_id, fixed = TRUE))%>%
+    filter(!grepl("Mtb", anon_id, fixed = TRUE))%>%
+    filter(!( !is.na(isolation_source) & isolation_source %in% excluded_sources ))
+  
+  final <- results_filtered %>%
     select(-wa_id) %>%
-    rename(sample_name = anon_id) %>%
-    mutate(ncbi_bioproject = "PRJNA288601",
-           title = NA_character_,
-           description = NA_character_,
-           authors = "list of AMD wet and dry lab plus Philip?",
-           submitting_lab = "Washington State Department of Health Public Health Laboratories",
-           submitting_lab_division = "Division of Disease Control & Health Statistics",
-           isolate = sample_name,
-           host_disease = NA_character_,
-           organism = Description,
-           lat_long = NA_character_,
-           source_type = NA_character_,
-           strain = NA_character_,
-           purpose_of_sampling = NA_character_,
-           assembly_protocol = "SPAdes",
-           mean_coverage = NA_character_, 
-           fasta_path = NA_character_,
-           gff_path = NA_character_,
-           ncbi_sequence_name_sra = sample_name,
-           illumina_sequence_instrument = "Illumina Miseq",
-           illumina_library_source = "GENOMIC",
-           illumina_library_strategy = "WGS",
-           illumina_library_layout = "PAIRED",
-           illumina_library_protocol = "Illumina DNA PREP KIT",
-           illumina_sra_file_path1 = NA_character_,
-           illumina_sra_file_path2 = NA_character_
+    rename( `bs-Isolate` = anon_id) %>%
+    mutate(
+      ncbi_bioproject = "",
+      authors = "",
+      organism = pathogen,
+      collection_date = collection_date,
+      collected_by = collected_by,
+      `gb-sample_name` = str_extract(`bs-Isolate`, "WAPHL-\\d{6,7}"),
+      `src-geo_loc_name` = "USA:Washington",
+      `src-Host` = "Homo sapiens",
+      `src-Isolate` = `bs-Isolate`,
+      `src-Isolation_source` = isolation_source,
+      `bs-sample_title` = "",
+      `bs-collected_by` = collected_by,
+      `bs-geo_loc_name` = "USA:Washington",
+      `bs-host` = "Homo sapiens",
+      `bs-host_disease` = "",
+      `bs-isolation_source` = isolation_source,
+      `bs-sample_name` = str_extract(`bs-Isolate`, "WAPHL-\\d{6,7}"),
+      illumina_sequence_instrument = "",
+      illumina_library_source = "",
+      illumina_library_strategy = "",
+      illumina_library_layout = "",
+      illumina_library_protocol = "",
+      illumina_sra_file_path1 = "",
+      illumina_sra_file_path2 = ""
     )
            
            
            
-      
-
-csv_filename <- file.path(Sys.getenv("EXPORT_PATH"), paste0("anon_metadata_", Sys.Date(), ".csv"))
-write.csv(anon_id_clean, csv_filename, row.names = FALSE)
-cat("Exported to:", csv_filename, "\n")
+  csv_filename <- file.path(Sys.getenv("EXPORT_PATH"),
+                          paste0("anon_metadata_", Sys.Date(), ".csv"))
+  write.csv(final, csv_filename, row.names = FALSE)
+  cat("Exported to:", csv_filename, "\n")
+  
+  return(final)
 
 }
 
