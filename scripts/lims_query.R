@@ -6,28 +6,35 @@ library(odbc)
 library(tidyverse)
 library(glue)
 
-#readRenviron("../.Renviron")  #load renviron file here
+readRenviron("../.Renviron")  #load renviron file here
 
-# Credentials
-starLIMS_path <- Sys.getenv("STARLIMS_PATH")
-db_info <- read_tsv(starLIMS_path)
+# Configs (including multi tables)
+#starLIMS_path <- Sys.getenv("STARLIMS_PATH")
 secure_path <- Sys.getenv("SECURE_PATH")
+lims_common <- Sys.getenv("TABLE_COMMON")
+lims_micro <- Sys.getenv("TABLE_MICRO")
+database <- Sys.getenv("DATABASE")
+server <- Sys.getenv("SERVER")
+
+#server   <- db_info$server[1]
+#database <- db_info$database[1]
+#tables   <- unique(db_info$table)
+
+esc<- function(x) gsub("'", "''", x)
+
+
+
 
 #read lines to get the data section only of wonky samplesheet formatting
 read_samplesheet_data <- function(file_path) {
   lines <- readLines(file_path)
   data_start <- grep("^\\[Data\\]", lines)
-  if (length(data_start) == 0) {
-    warning(paste("No [Data] section found in", file_path))
-    return(NULL)
-  }
-  
-  data_lines <- lines[(data_start + 1):length(lines)]
+  if (length(data_start) == 0) return(NULL)
   read.csv(text = paste(lines[(data_start + 1):length(lines)], collapse = "\n"), stringsAsFactors = FALSE)
 }
 
 
-samplesheet_dir <- "../samplesheets"
+samplesheet_dir <- "samplesheets"
 samplesheet_files <- list.files(
   path = samplesheet_dir, 
   pattern = "^SampleSheet_.*\\.csv$", 
@@ -39,43 +46,101 @@ samplesheets.df <-do.call(
   )
 head(samplesheets.df)
 
-samplesheets.df <- samplesheets.df%>%
-  mutate(wa_id = sub("-.*", "", Sample_ID))%>%
-  select(wa_id, Description)
+samplesheets.df <- samplesheets.df %>%
+  mutate(
+    wa_id = str_extract(Sample_ID, "WA\\d+" ))%>%
+  filter(!is.na(wa_id) & wa_id != "") %>%
+  distinct(wa_id, Description)
+
+norm_id <- function(x) toupper(trimws(x))
+ids_norm <- samplesheets.df %>%
+  transmute(id_norm = norm_id(wa_id)) %>%
+  distinct()
 
 # Connection
 lims_con <- DBI::dbConnect(odbc::odbc(),
-                      Driver = "SQL Server Native Client 11.0",
-                      Server = db_info$server,
-                      Database = db_info$database,
-                      Trusted_connection = "yes",
-                      ApplicationIntent = "ReadOnly",
-                      timezone = Sys.timezone(),
-                      timezone.out = Sys.timezone())
+                           Driver = "SQL Server Native Client 11.0",
+                           Server = server,
+                           Database = database,
+                           Trusted_connection = "yes",
+                           ApplicationIntent = "ReadOnly",
+                           timezone = Sys.timezone(),
+                           timezone.out = Sys.timezone()
+)
+on.exit(DBI::dbDisconnect(lims_con), add = TRUE)
+
+# Create temp table of IDs (best for many IDs)
+DBI::dbExecute(lims_con, "IF OBJECT_ID('tempdb..#ids') IS NOT NULL DROP TABLE #ids;")
+DBI::dbExecute(lims_con, "CREATE TABLE #ids (id_norm varchar(64) NOT NULL);")
+DBI::dbWriteTable(lims_con, "#ids", ids_norm, append = TRUE, temporary = TRUE)
 
 #query 
-results <- samplesheets.df %>%
-  mutate(lims_info = map(wa_id, function(id) {
-    sql_query <- paste0(
-      "SELECT TOP 1 SpecimenDateCollected, SpecimenSource, PatientAddressCountry, PatientAddressState, PatientAddressCounty, SubmitterName ",
-      "FROM ", db_info$database, ".dbo.", db_info$table, " ",
-      "WHERE PHLAccessionNumber = '", id, "'"
-    )
-    dbGetQuery(lims_con, sql_query)
-  })) %>%
-  unnest(lims_info)
-results<- results %>%
-  mutate(SpecimenDateCollected = as.Date(SpecimenDateCollected)) %>%
-  rename("collection_date" = SpecimenDateCollected,
-         "isolation_source" = SpecimenSource,
-         "county" = PatientAddressCounty,
-         "state" = PatientAddressState,
-         "country" = PatientAddressCountry,
-         "collected_by" = SubmitterName)
 
-print(results)
+sql <- glue("
+WITH base AS (
+  SELECT i.id_norm,
+         c.SpecimenDateCollected, c.SpecimenSource,
+         c.PatientAddressCountry, c.PatientAddressState, c.PatientAddressCounty,
+         c.SubmitterName,
+         '{lims_common}' AS src_table
+  FROM #ids i
+  JOIN {`database`}.dbo.{`lims_common`} c
+    ON UPPER(RTRIM(LTRIM(CAST(c.PHLAccessionNumber AS varchar(64))))) = i.id_norm
+
+  UNION ALL
+
+  SELECT i.id_norm,
+         m.SpecimenDateCollected, m.SpecimenSource,
+         m.PatientAddressCountry, m.PatientAddressState, m.PatientAddressCounty,
+         m.SubmitterName,
+         '{lims_micro}' AS src_table
+  FROM #ids i
+  JOIN {`database`}.dbo.{`lims_micro`} m
+    ON UPPER(RTRIM(LTRIM(CAST(m.PHLAccessionNumber AS varchar(64))))) = i.id_norm
+),
+ranked AS (
+  SELECT *,
+         ROW_NUMBER() OVER (
+           PARTITION BY id_norm
+           ORDER BY SpecimenDateCollected DESC
+         ) AS rn
+  FROM base
+)
+SELECT
+  id_norm AS query_id,
+  CAST(SpecimenDateCollected AS date) AS collection_date,
+  SpecimenSource        AS isolation_source,
+  PatientAddressCountry AS country,
+  PatientAddressState   AS state,
+  PatientAddressCounty  AS county,
+  SubmitterName         AS collected_by,
+  src_table
+FROM ranked
+WHERE rn = 1
+ORDER BY query_id;
+")
+
+res <- DBI::dbGetQuery(lims_con, sql)
+
+# Join back Description and rename
+results <- ids_norm %>%
+  left_join(res, by = c("id_norm" = "query_id")) %>%
+  left_join(samplesheets.df %>% transmute(id_norm = norm_id(wa_id), Description),
+            by = "id_norm") %>%
+  rename(wa_id = id_norm) %>%
+  relocate(wa_id, Description)
+
+
+
+
+print(dplyr::count(results, src_table, sort = TRUE))
 
 # Save results for use in duckDB and metadata scripts 
 saveRDS(results, file = file.path(secure_path, "lims_query_results.rds"))
+
+outfile <- sprintf("lims_query_results_full_%s.csv",
+                   format(Sys.time(), "%Y%m%d_%H%M%S"))
+
+utils::write.csv(results, outfile, row.names = FALSE, na = "")
 
 
