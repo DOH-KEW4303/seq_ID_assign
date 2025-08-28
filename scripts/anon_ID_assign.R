@@ -175,7 +175,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
               break
             }
             
-            new_anon_id <- paste0(prefix, "/Human/USA/WA-PHL-", rand_num, "/", year)
+            new_anon_id <- paste0(prefix, "/Human/USA/WAPHL-", rand_num, "/", year)
             
             # ensure that the new anon ID doesn't accidentally match another ID already in 
             existing <- dbGetQuery(con, paste0(
