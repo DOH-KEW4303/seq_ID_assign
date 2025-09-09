@@ -174,8 +174,13 @@ assign_anon_ids <- function(results, db_path, lock_path) {
               new_anon_id <- NA_character_
               break
             }
-            
-            new_anon_id <- paste0(prefix, "/Human/USA/WAPHL-", rand_num, "/", year)
+            no_host_prefixes <- c("WNV", "DenV", "ZikaV")
+            if (prefix %in% no_host_prefixes) {
+              new_anon_id <- paste0(prefix, "/USA/WAPHL-", rand_num, "/", year)
+            } else {
+              new_anon_id <- paste0(prefix, "/Human/USA/WAPHL-", rand_num, "/", year)
+            }
+
             
             # ensure that the new anon ID doesn't accidentally match another ID already in 
             existing <- dbGetQuery(con, paste0(
