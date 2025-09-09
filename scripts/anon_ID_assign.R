@@ -93,7 +93,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
   descriptor_prefixes <- list(
     "Influenza A" = "FluA",
     "Influenza B" = "FluB",
-    "SARS-CoV-2" = "CoV2",
+    "SARS-CoV-2" = "SARS-CoV-2",
     "Corynebacterium_diphtheriae" = "cDiph",
     "Corynebacterium_ulcerans" = "cUlcerans",
     "Measles" = "hMV",
