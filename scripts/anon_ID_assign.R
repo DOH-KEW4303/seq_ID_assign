@@ -86,9 +86,16 @@ assign_anon_ids <- function(results, db_path, lock_path) {
       wa_id TEXT PRIMARY KEY,
       anon_id TEXT,
       collection_date INTEGER,
-      pathogen TEXT
+      pathogen TEXT,
+      biosample TEXT,
+      genbank TEXT,
     )
   ")
+  
+  # If the table already exists (older schema), make sure new columns are added
+  dbExecute(con, "ALTER TABLE anon_ids ADD COLUMN IF NOT EXISTS biosample TEXT;")
+  dbExecute(con, "ALTER TABLE anon_ids ADD COLUMN IF NOT EXISTS genbank   TEXT;")
+  
   # Define descriptor-to-prefix mapping 
   descriptor_prefixes <- list(
     "Influenza A" = "FluA",
@@ -96,8 +103,8 @@ assign_anon_ids <- function(results, db_path, lock_path) {
     "SARS-CoV-2" = "SARS-CoV-2",
     "Corynebacterium_diphtheriae" = "cDiph",
     "Corynebacterium_ulcerans" = "cUlcerans",
-    "Measles" = "hMV",
-    "Mumps" = "MuV",
+    "Measles_virus" = "hMV",
+    "Mumps_virus" = "MuV",
     "Adenovirus" = "HAdV",
     "HIV" = "hIV",
     "Hepatitis B" = "HepBV",
@@ -203,6 +210,8 @@ assign_anon_ids <- function(results, db_path, lock_path) {
     ) %>%
     ungroup()
   dbExecute(con, "CHECKPOINT")
+  print(dbListFields(con, "anon_ids"))
+  
   dbDisconnect(con)
   return(results)
 }
