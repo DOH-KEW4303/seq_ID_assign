@@ -229,7 +229,7 @@ export_metadata <- function(results) {
   
   final <- results_filtered %>%
     select(-wa_id) %>%
-    rename( `bs-Isolate` = anon_id) %>%
+    rename( `bs-isolate` = anon_id) %>%
     mutate(
       ncbi_bioproject = "",
       authors = "",
@@ -237,19 +237,22 @@ export_metadata <- function(results) {
       collection_date = collection_date,
       collected_by = collected_by,
       sequence_name = "",
-      `gb-sample_name` = str_extract(`bs-isolate`, "WAPHL-\\d{6,7}"),
+      `gb-sample_name` = str_extract(`bs-isolate`, "WAPHL-\\d+"),
       `src-geo_loc_name` = "USA:Washington",
-      `src-Host` = "Homo sapiens",
+      `src-Host` =  case_when(
+        !is.na(mosquito_species) & mosquito_species != "" ~ mosquito_species,
+        TRUE ~ "Homo sapiens"
+      ),
       `src-Isolate` = `bs-isolate`,
       `src-Isolation_source` = isolation_source,
       `bs-sample_title` = "",
       `bs-collected_by` = collected_by,
       `bs-geo_loc_name` = "USA:Washington",
       `bs-lat_lon` = "missing",
-      `bs-host` = "Homo sapiens",
+      `bs-host` = `src-Host`,
       `bs-host_disease` = "",
       `bs-isolation_source` = isolation_source,
-      `bs-sample_name` = str_extract(`bs-Isolate`, "WAPHL-\\d{6,7}"),
+      `bs-sample_name` = str_extract(`bs-isolate`, "WAPHL-\\d+"),
       illumina_sequence_instrument = "",
       illumina_library_source = "",
       illumina_library_strategy = "",
@@ -257,7 +260,8 @@ export_metadata <- function(results) {
       illumina_library_protocol = "",
       illumina_sra_file_path1 = "",
       illumina_sra_file_path2 = ""
-    )
+    ) %>%
+    select(-mosquito_species)
            
            
            
@@ -269,6 +273,7 @@ export_metadata <- function(results) {
   return(final)
 
 }
+
 
 #execute functions
 results <- assign_anon_ids(results, db_path, lock_path)
