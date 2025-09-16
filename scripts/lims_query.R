@@ -5,6 +5,7 @@ library(DBI)
 library(odbc)  
 library(tidyverse)
 library(glue)
+library(fs)
 
 readRenviron("../.Renviron")  #load renviron file here
 
@@ -148,11 +149,38 @@ results <- ids_norm %>%
 
 print(dplyr::count(results, src_table, sort = TRUE))
 
-# Save results for use in duckDB and metadata scripts 
+# Save results for use in duckDB and metadata scripts. archive samplesheets
+samplesheet_dir <- "samplesheets"
+archive_dir <- file.path(samplesheet_dir, "archive")
+
+# Create archive folder if it doesn't exist
+if (!dir_exists(archive_dir)) {
+  dir_create(archive_dir)
+}
+
+# Move ALL csv files from samplesheets/ to archive/
+samplesheet_files <- dir_ls(samplesheet_dir, glob = "*.csv", type = "file")
+
+for (file in samplesheet_files) {
+  archive_path <- path(archive_dir, path_file(file))
+  file_move(file, archive_path)
+  message("Archived: ", path_file(file))
+}
+
 saveRDS(results, file = file.path(secure_path, "lims_query_results.rds"))
 
-outfile <- sprintf("lims_query_results_full_%s.csv",
-                   format(Sys.time(), "%Y%m%d_%H%M%S"))
+#write to a csv for checks
+lims_results_dir <- file.path(secure_path, "lims_results")
+if (!dir.exists(lims_results_dir)) {
+  dir.create(lims_results_dir, recursive = TRUE)
+}
+
+# Build timestamped filename in the results folder
+outfile <- file.path(
+  lims_results_dir,
+  sprintf("lims_query_results_full_%s.csv",
+          format(Sys.time(), "%Y%m%d_%H%M%S"))
+)
 
 utils::write.csv(results, outfile, row.names = FALSE, na = "")
 
