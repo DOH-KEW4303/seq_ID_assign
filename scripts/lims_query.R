@@ -83,66 +83,57 @@ WITH base AS (
          c.SpecimenDateCollected, c.SpecimenSource,
          c.PatientAddressCountry, c.PatientAddressState, c.PatientAddressCounty,
          c.SubmitterName,
-         NULL as MosquitoSpecies,
          '{lims_common}' AS src_table
   FROM #ids i
   JOIN {`database`}.dbo.{`lims_common`} c
     ON UPPER(RTRIM(LTRIM(CAST(c.PHLAccessionNumber AS varchar(64))))) = i.id_norm
 
-  UNION ALL
+  UNION 
 
   SELECT i.id_norm,
          m.SpecimenDateCollected, m.SpecimenSource,
          m.PatientAddressCountry, m.PatientAddressState, m.PatientAddressCounty,
          m.SubmitterName,
-         NULL as MosquitoSpecies,
          '{lims_micro}' AS src_table
   FROM #ids i
   JOIN {`database`}.dbo.{`lims_micro`} m
     ON UPPER(RTRIM(LTRIM(CAST(m.PHLAccessionNumber AS varchar(64))))) = i.id_norm
     
-  UNION ALL
-  
-  SELECT i.id_norm,
-       NULL as SpecimenDateCollected,  
-       a.SpecimenSource,
-       NULL AS PatientAddressCountry,
-       NULL AS PatientAddressState,
-       NULL AS PatientAddressCounty,
-       a.SubmitterName,
-       a.MosquitoSpecies as MosquitoSpecies,
-       '{lims_arbo}' AS src_table
-  FROM #ids i
-  JOIN {`database`}.dbo.{`lims_arbo`} a
-    ON UPPER(RTRIM(LTRIM(CAST(a.PHLAccessionNumber AS varchar(64))))) = i.id_norm
-),
-
-ranked AS (
-  SELECT *,
-         ROW_NUMBER() OVER (
-           PARTITION BY id_norm
-           ORDER BY 
-             CASE WHEN src_table = '{lims_arbo}' THEN 1 ELSE 2 END,
-             SpecimenDateCollected DESC
-         ) AS rn
-  FROM base
 )
+
+
 SELECT
-  id_norm AS query_id,
-  CAST(SpecimenDateCollected AS date) AS collection_date,
-  SpecimenSource        AS isolation_source,
-  PatientAddressCountry AS country,
-  PatientAddressState   AS state,
-  PatientAddressCounty  AS county,
-  SubmitterName         AS collected_by,
-  MosquitoSpecies       AS mosquito_species,
-  src_table
-FROM ranked
-WHERE rn = 1
+  b.id_norm AS query_id,
+  CAST(b.SpecimenDateCollected AS date) AS collection_date,
+  b.SpecimenSource        AS isolation_source,
+  b.PatientAddressCountry AS country,
+  b.PatientAddressState   AS state,
+  b.PatientAddressCounty  AS county,
+  b.SubmitterName         AS collected_by,
+  a.MosquitoSpecies       AS mosquito_species,   
+  b.src_table
+FROM base b
+LEFT JOIN {`database`}.dbo.{`lims_arbo`} a
+  ON UPPER(RTRIM(LTRIM(CAST(a.PHLAccessionNumber AS varchar(64))))) = b.id_norm
 ORDER BY query_id;
 ")
 
 res <- DBI::dbGetQuery(lims_con, sql)
+
+# Deduplicate here
+res <- res %>%
+  group_by(query_id) %>%
+  summarise(
+    collection_date   = max(collection_date, na.rm = TRUE),
+    isolation_source  = first(na.omit(isolation_source)),
+    country           = first(na.omit(country)),
+    state             = first(na.omit(state)),
+    county            = first(na.omit(county)),
+    collected_by      = first(na.omit(collected_by)),
+    mosquito_species  = first(na.omit(mosquito_species)),
+    src_table         = paste(unique(src_table), collapse = "; "),
+    .groups = "drop"
+  )
 
 # Join back Description and rename
 results <- ids_norm %>%
