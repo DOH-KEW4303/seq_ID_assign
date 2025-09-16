@@ -13,6 +13,7 @@ readRenviron("../.Renviron")  #load renviron file here
 secure_path <- Sys.getenv("SECURE_PATH")
 lims_common <- Sys.getenv("TABLE_COMMON")
 lims_micro <- Sys.getenv("TABLE_MICRO")
+lims_arbo <- Sys.getenv("TABLE_ARBO")
 database <- Sys.getenv("DATABASE")
 server <- Sys.getenv("SERVER")
 
@@ -82,6 +83,7 @@ WITH base AS (
          c.SpecimenDateCollected, c.SpecimenSource,
          c.PatientAddressCountry, c.PatientAddressState, c.PatientAddressCounty,
          c.SubmitterName,
+         NULL as MosquitoSpecies,
          '{lims_common}' AS src_table
   FROM #ids i
   JOIN {`database`}.dbo.{`lims_common`} c
@@ -93,16 +95,35 @@ WITH base AS (
          m.SpecimenDateCollected, m.SpecimenSource,
          m.PatientAddressCountry, m.PatientAddressState, m.PatientAddressCounty,
          m.SubmitterName,
+         NULL as MosquitoSpecies,
          '{lims_micro}' AS src_table
   FROM #ids i
   JOIN {`database`}.dbo.{`lims_micro`} m
     ON UPPER(RTRIM(LTRIM(CAST(m.PHLAccessionNumber AS varchar(64))))) = i.id_norm
+    
+  UNION ALL
+  
+  SELECT i.id_norm,
+       NULL as SpecimenDateCollected,  
+       a.SpecimenSource,
+       NULL AS PatientAddressCountry,
+       NULL AS PatientAddressState,
+       NULL AS PatientAddressCounty,
+       a.SubmitterName,
+       a.MosquitoSpecies as MosquitoSpecies,
+       '{lims_arbo}' AS src_table
+  FROM #ids i
+  JOIN {`database`}.dbo.{`lims_arbo`} a
+    ON UPPER(RTRIM(LTRIM(CAST(a.PHLAccessionNumber AS varchar(64))))) = i.id_norm
 ),
+
 ranked AS (
   SELECT *,
          ROW_NUMBER() OVER (
            PARTITION BY id_norm
-           ORDER BY SpecimenDateCollected DESC
+           ORDER BY 
+             CASE WHEN src_table = '{lims_arbo}' THEN 1 ELSE 2 END,
+             SpecimenDateCollected DESC
          ) AS rn
   FROM base
 )
@@ -114,6 +135,7 @@ SELECT
   PatientAddressState   AS state,
   PatientAddressCounty  AS county,
   SubmitterName         AS collected_by,
+  MosquitoSpecies       AS mosquito_species,
   src_table
 FROM ranked
 WHERE rn = 1
