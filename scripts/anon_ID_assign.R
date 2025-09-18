@@ -225,16 +225,20 @@ export_metadata <- function(results) {
       ncbi_bioproject = "",
       authors = "",
       organism = pathogen,
-      collection_date = collection_date,
+      collection_date = as.character(format(as.Date(collection_date), "%Y-%m-%d")),
       collected_by = collected_by,
       `gb-sample_name` = str_extract(`bs-Isolate`, "WAPHL-\\d{6,7}"),
-      `src-geo_loc_name` = "USA:Washington",
+      `src-geo_loc_name` = if_else(
+        is.na(county),
+        "USA:Washington",
+        paste0("USA:Washington,", county)
+      ),
       `src-Host` = "Homo sapiens",
       `src-Isolate` = `bs-Isolate`,
       `src-Isolation_source` = isolation_source,
       `bs-sample_title` = "",
       `bs-collected_by` = collected_by,
-      `bs-geo_loc_name` = "USA:Washington",
+      `bs-geo_loc_name` = `src-geo_loc_name`,
       `bs-host` = "Homo sapiens",
       `bs-host_disease` = "",
       `bs-isolation_source` = isolation_source,
@@ -246,7 +250,8 @@ export_metadata <- function(results) {
       illumina_library_protocol = "",
       illumina_sra_file_path1 = "",
       illumina_sra_file_path2 = ""
-    )
+    ) %>%
+    select(-county,-state,-country,-src_table)
            
            
            
