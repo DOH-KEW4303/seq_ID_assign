@@ -5,6 +5,7 @@ library(DBI)
 library(odbc)  
 library(tidyverse)
 library(glue)
+library(fs)
 
 readRenviron("../.Renviron")  #load renviron file here
 
@@ -13,6 +14,7 @@ readRenviron("../.Renviron")  #load renviron file here
 secure_path <- Sys.getenv("SECURE_PATH")
 lims_common <- Sys.getenv("TABLE_COMMON")
 lims_micro <- Sys.getenv("TABLE_MICRO")
+lims_arbo <- Sys.getenv("TABLE_ARBO")
 database <- Sys.getenv("DATABASE")
 server <- Sys.getenv("SERVER")
 
@@ -87,7 +89,7 @@ WITH base AS (
   JOIN {`database`}.dbo.{`lims_common`} c
     ON UPPER(RTRIM(LTRIM(CAST(c.PHLAccessionNumber AS varchar(64))))) = i.id_norm
 
-  UNION ALL
+  UNION 
 
   SELECT i.id_norm,
          m.SpecimenDateCollected, m.SpecimenSource,
@@ -97,30 +99,42 @@ WITH base AS (
   FROM #ids i
   JOIN {`database`}.dbo.{`lims_micro`} m
     ON UPPER(RTRIM(LTRIM(CAST(m.PHLAccessionNumber AS varchar(64))))) = i.id_norm
-),
-ranked AS (
-  SELECT *,
-         ROW_NUMBER() OVER (
-           PARTITION BY id_norm
-           ORDER BY SpecimenDateCollected DESC
-         ) AS rn
-  FROM base
+    
 )
+
+
 SELECT
-  id_norm AS query_id,
-  CAST(SpecimenDateCollected AS date) AS collection_date,
-  SpecimenSource        AS isolation_source,
-  PatientAddressCountry AS country,
-  PatientAddressState   AS state,
-  PatientAddressCounty  AS county,
-  SubmitterName         AS collected_by,
-  src_table
-FROM ranked
-WHERE rn = 1
+  b.id_norm AS query_id,
+  CAST(b.SpecimenDateCollected AS date) AS collection_date,
+  b.SpecimenSource        AS isolation_source,
+  b.PatientAddressCountry AS country,
+  b.PatientAddressState   AS state,
+  b.PatientAddressCounty  AS county,
+  b.SubmitterName         AS collected_by,
+  a.MosquitoSpecies       AS mosquito_species,   
+  b.src_table
+FROM base b
+LEFT JOIN {`database`}.dbo.{`lims_arbo`} a
+  ON UPPER(RTRIM(LTRIM(CAST(a.PHLAccessionNumber AS varchar(64))))) = b.id_norm
 ORDER BY query_id;
 ")
 
 res <- DBI::dbGetQuery(lims_con, sql)
+
+# Deduplicate here
+res <- res %>%
+  group_by(query_id) %>%
+  summarise(
+    collection_date   = max(collection_date, na.rm = TRUE),
+    isolation_source  = first(na.omit(isolation_source)),
+    country           = first(na.omit(country)),
+    state             = first(na.omit(state)),
+    county            = first(na.omit(county)),
+    collected_by      = first(na.omit(collected_by)),
+    mosquito_species  = first(na.omit(mosquito_species)),
+    src_table         = paste(unique(src_table), collapse = "; "),
+    .groups = "drop"
+  )
 
 # Join back Description and rename
 results <- ids_norm %>%
@@ -135,11 +149,38 @@ results <- ids_norm %>%
 
 print(dplyr::count(results, src_table, sort = TRUE))
 
-# Save results for use in duckDB and metadata scripts 
+# Save results for use in duckDB and metadata scripts. archive samplesheets
+samplesheet_dir <- "samplesheets"
+archive_dir <- file.path(samplesheet_dir, "archive")
+
+# Create archive folder if it doesn't exist
+if (!dir_exists(archive_dir)) {
+  dir_create(archive_dir)
+}
+
+# Move ALL csv files from samplesheets/ to archive/
+samplesheet_files <- dir_ls(samplesheet_dir, glob = "*.csv", type = "file")
+
+for (file in samplesheet_files) {
+  archive_path <- path(archive_dir, path_file(file))
+  file_move(file, archive_path)
+  message("Archived: ", path_file(file))
+}
+
 saveRDS(results, file = file.path(secure_path, "lims_query_results.rds"))
 
-outfile <- sprintf("lims_query_results_full_%s.csv",
-                   format(Sys.time(), "%Y%m%d_%H%M%S"))
+#write to a csv for checks
+lims_results_dir <- file.path(secure_path, "lims_results")
+if (!dir.exists(lims_results_dir)) {
+  dir.create(lims_results_dir, recursive = TRUE)
+}
+
+# Build timestamped filename in the results folder
+outfile <- file.path(
+  lims_results_dir,
+  sprintf("lims_query_results_full_%s.csv",
+          format(Sys.time(), "%Y%m%d_%H%M%S"))
+)
 
 utils::write.csv(results, outfile, row.names = FALSE, na = "")
 

@@ -86,9 +86,16 @@ assign_anon_ids <- function(results, db_path, lock_path) {
       wa_id TEXT PRIMARY KEY,
       anon_id TEXT,
       collection_date INTEGER,
-      pathogen TEXT
+      pathogen TEXT,
+      biosample TEXT,
+      genbank TEXT,
     )
   ")
+  
+  # If the table already exists (older schema), make sure new columns are added
+  dbExecute(con, "ALTER TABLE anon_ids ADD COLUMN IF NOT EXISTS biosample TEXT;")
+  dbExecute(con, "ALTER TABLE anon_ids ADD COLUMN IF NOT EXISTS genbank   TEXT;")
+  
   # Define descriptor-to-prefix mapping 
   descriptor_prefixes <- list(
     "Influenza A" = "FluA",
@@ -96,8 +103,8 @@ assign_anon_ids <- function(results, db_path, lock_path) {
     "SARS-CoV-2" = "SARS-CoV-2",
     "Corynebacterium_diphtheriae" = "cDiph",
     "Corynebacterium_ulcerans" = "cUlcerans",
-    "Measles" = "hMV",
-    "Mumps" = "MuV",
+    "Measles_virus" = "hMV",
+    "Mumps_virus" = "MuV",
     "Adenovirus" = "HAdV",
     "HIV" = "hIV",
     "Hepatitis B" = "HepBV",
@@ -203,6 +210,8 @@ assign_anon_ids <- function(results, db_path, lock_path) {
     ) %>%
     ungroup()
   dbExecute(con, "CHECKPOINT")
+  print(dbListFields(con, "anon_ids"))
+  
   dbDisconnect(con)
   return(results)
 }
@@ -220,7 +229,7 @@ export_metadata <- function(results) {
   
   final <- results_filtered %>%
     select(-wa_id) %>%
-    rename( `bs-Isolate` = anon_id) %>%
+    rename( `bs-isolate` = anon_id) %>%
     mutate(
       ncbi_bioproject = "",
       authors = "",
@@ -240,9 +249,27 @@ export_metadata <- function(results) {
       `bs-collected_by` = collected_by,
       `bs-geo_loc_name` = `src-geo_loc_name`,
       `bs-host` = "Homo sapiens",
+      sequence_name = "",
+      `gb-sample_name` = str_extract(`bs-isolate`, "WAPHL-\\d+"),
+      `src-geo_loc_name` = if_else(
+        is.na(county),
+        "USA:Washington",
+        paste0("USA:Washington,", str_to_title(county))
+      ),
+      `src-Host` =  case_when(
+        !is.na(mosquito_species) & mosquito_species != "" ~ mosquito_species,
+        TRUE ~ "Homo sapiens"
+      ),
+      `src-Isolate` = `bs-isolate`,
+      `src-Isolation_source` = isolation_source,
+      `bs-sample_title` = "",
+      `bs-collected_by` = collected_by,
+      `bs-geo_loc_name` = "USA:Washington",
+      `bs-lat_lon` = "missing",
+      `bs-host` = `src-Host`,
       `bs-host_disease` = "",
       `bs-isolation_source` = isolation_source,
-      `bs-sample_name` = str_extract(`bs-Isolate`, "WAPHL-\\d{6,7}"),
+      `bs-sample_name` = str_extract(`bs-isolate`, "WAPHL-\\d+"),
       illumina_sequence_instrument = "",
       illumina_library_source = "",
       illumina_library_strategy = "",
@@ -251,8 +278,8 @@ export_metadata <- function(results) {
       illumina_sra_file_path1 = "",
       illumina_sra_file_path2 = ""
     ) %>%
-    select(-county,-state,-country,-src_table)
-           
+
+    select(-county,-state,-country,-src_table, -mosquito_species)
            
            
   csv_filename <- file.path(Sys.getenv("EXPORT_PATH"),
@@ -263,6 +290,7 @@ export_metadata <- function(results) {
   return(final)
 
 }
+
 
 #execute functions
 results <- assign_anon_ids(results, db_path, lock_path)
