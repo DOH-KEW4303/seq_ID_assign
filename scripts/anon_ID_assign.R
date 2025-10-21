@@ -229,7 +229,7 @@ export_metadata <- function(results) {
   
   final <- results_filtered %>%
     select(-wa_id) %>%
-    rename( `bs-isolate` = anon_id) %>%
+    rename( `bs-Isolate` = anon_id) %>%
     mutate(
       ncbi_bioproject = "",
       authors = "",
@@ -250,7 +250,7 @@ export_metadata <- function(results) {
       `bs-geo_loc_name` = `src-geo_loc_name`,
       `bs-host` = "Homo sapiens",
       sequence_name = "",
-      `gb-sample_name` = str_extract(`bs-isolate`, "WAPHL-\\d+"),
+      `gb-sample_name` = str_extract(`bs-Isolate`, "WAPHL-\\d+"),
       `src-geo_loc_name` = if_else(
         is.na(county),
         "USA:Washington",
@@ -260,7 +260,7 @@ export_metadata <- function(results) {
         !is.na(mosquito_species) & mosquito_species != "" ~ mosquito_species,
         TRUE ~ "Homo sapiens"
       ),
-      `src-Isolate` = `bs-isolate`,
+      `src-Isolate` = `bs-Isolate`,
       `src-Isolation_source` = isolation_source,
       `bs-sample_title` = "",
       `bs-collected_by` = collected_by,
@@ -269,7 +269,20 @@ export_metadata <- function(results) {
       `bs-host` = `src-Host`,
       `bs-host_disease` = "",
       `bs-isolation_source` = isolation_source,
-      `bs-sample_name` = str_extract(`bs-isolate`, "WAPHL-\\d+"),
+      `bs-sample_name` = str_extract(`bs-Isolate`, "WAPHL-\\d+"),
+      `gs-sample_name` = "",
+      `gs-covv_type` = "betacoronavirus",
+      `gs-covv_passage` = "Original",
+      `gs-covv_location` = `src-geo_loc_name`,
+      `gs-covv_host` = "Homo sapiens",
+      `gs-covv_sex` = patient_gender,
+      `gs-covv_patient_age` = patient_age,
+      `gs-covv_patient_status` = "Unknown",
+      `gs-covv_seq_technology` = "Illumina MiSeq",
+      `gs-covv_orig_lab` = collected_by,
+      `gs-covv_orig_lab_address` = submitter_full_address,
+      `gs-covv_comments` = "",
+      `gs-comment_type` = "",
       illumina_sequence_instrument = "",
       illumina_library_source = "",
       illumina_library_strategy = "",
