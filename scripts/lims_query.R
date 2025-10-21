@@ -82,8 +82,8 @@ sql <- glue("
 WITH base AS (
   SELECT i.id_norm,
          c.SpecimenDateCollected, c.SpecimenSource,
-         c.PatientAddressCountry, c.PatientAddressState, c.PatientAddressCounty,
-         c.SubmitterName,
+         c.PatientAddressCountry, c.PatientAddressState, c.PatientAddressCounty, c.PatientGender,c.PatientAge,
+         c.SubmitterName,c.SubmitterAddress1, c.SubmitterCity, c.SubmitterState, c.SubmitterZipcode,
          '{lims_common}' AS src_table
   FROM #ids i
   JOIN {`database`}.dbo.{`lims_common`} c
@@ -93,8 +93,8 @@ WITH base AS (
 
   SELECT i.id_norm,
          m.SpecimenDateCollected, m.SpecimenSource,
-         m.PatientAddressCountry, m.PatientAddressState, m.PatientAddressCounty,
-         m.SubmitterName,
+         m.PatientAddressCountry, m.PatientAddressState, m.PatientAddressCounty,m.PatientGender,m.PatientAge,
+         m.SubmitterName,m.SubmitterAddress1, m.SubmitterCity, m.SubmitterState, m.SubmitterZipcode,
          '{lims_micro}' AS src_table
   FROM #ids i
   JOIN {`database`}.dbo.{`lims_micro`} m
@@ -110,7 +110,13 @@ SELECT
   b.PatientAddressCountry AS country,
   b.PatientAddressState   AS state,
   b.PatientAddressCounty  AS county,
+  b.PatientGender         AS patient_gender,
+  b.PatientAge            AS patient_age,
   b.SubmitterName         AS collected_by,
+  b.SubmitterAddress1     AS submitter_address,
+  b.SubmitterCity         AS submitter_city,
+  b.SubmitterState        AS submitter_state,
+  b.SubmitterZipcode      AS submitter_zip,
   a.MosquitoSpecies       AS mosquito_species,   
   b.src_table
 FROM base b
@@ -130,11 +136,36 @@ res <- res %>%
     country           = first(na.omit(country)),
     state             = first(na.omit(state)),
     county            = first(na.omit(county)),
+    patient_gender    = first(na.omit(patient_gender)),  
+    patient_age       = first(na.omit(patient_age)),
     collected_by      = first(na.omit(collected_by)),
+    submitter_address=  first(na.omit(submitter_address)),
+    submitter_city    = first(na.omit(submitter_city)),
+    submitter_state   = first(na.omit(submitter_state)),
+    submitter_zip     = first(na.omit(submitter_zip)),
     mosquito_species  = first(na.omit(mosquito_species)),
     src_table         = paste(unique(src_table), collapse = "; "),
     .groups = "drop"
   )
+#concat to single address column for submitter
+res <- res %>%
+  # clean parts first: trim and treat "" as NA
+  mutate(across(
+    c(submitter_address, submitter_city, submitter_state, submitter_zip, country),
+    ~ na_if(str_trim(.), "")
+  )) %>%
+  # OPTIONAL light normalization (remove if you don’t want it)
+  mutate(
+    submitter_state = if_else(is.na(submitter_state), NA, toupper(submitter_state)),
+    submitter_zip   = str_replace_all(submitter_zip %||% "", "[^0-9-]", "") %>% na_if("")
+  ) %>%
+  # create the single field; keep originals with remove = FALSE
+  tidyr::unite(
+    "submitter_full_address",
+    submitter_address, submitter_city, submitter_state, submitter_zip, country,
+    sep = ", ", na.rm = TRUE, remove = FALSE
+  ) %>%
+  mutate(submitter_full_address = na_if(submitter_full_address, ""))
 
 # Join back Description and rename
 results <- ids_norm %>%
