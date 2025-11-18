@@ -103,7 +103,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
     "SARS-CoV-2" = "SARS-CoV-2",
     "Corynebacterium_diphtheriae" = "cDiph",
     "Corynebacterium_ulcerans" = "cUlcerans",
-    "Measles_virus" = "hMV",
+    "Measles" = "MVs",
     "Mumps_virus" = "MuV",
     "Adenovirus" = "HAdV",
     "HIV" = "hIV",
