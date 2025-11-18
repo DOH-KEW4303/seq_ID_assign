@@ -88,7 +88,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
       collection_date INTEGER,
       pathogen TEXT,
       biosample TEXT,
-      genbank TEXT,
+      genbank TEXT
     )
   ")
   
@@ -164,57 +164,89 @@ assign_anon_ids <- function(results, db_path, lock_path) {
            log_message(msg)
            existing_id$anon_id
            
-        }  else {
-          # extract year
-          year <- year(as.Date(collection_date))
-          new_anon_id <- NA_character_
-          
-          #try until we get a unique anon ID
-          repeat {
-            rand_num <- sprintf("%06d", sample(1e6, 1)) #generate padded 6 digit no 
-            prefix <- descriptor_prefixes[[pathogen]]
+          } else {
+            coll_date <- as.Date(collection_date)
+            year_val  <- year(coll_date)
+            prefix    <- descriptor_prefixes[[pathogen]]
             
             if (is.null(prefix)) {
-              msg <- paste("Unknown pathogen descriptor for WA ID:", wa_id, "-", pathogen, "→ skipping row.")
+              msg <- paste(
+                "Unknown pathogen descriptor for WA ID:",
+                wa_id, "-", pathogen, "→ skipping row."
+              )
               warning(msg)
               log_message(msg)
-              new_anon_id <- NA_character_
-              break
-            }
-            no_host_prefixes <- c("WNV", "DenV", "ZikaV")
-            if (prefix %in% no_host_prefixes) {
-              new_anon_id <- paste0(prefix, "/USA/WAPHL-", rand_num, "/", year)
+              NA_character_
+              
             } else {
-              new_anon_id <- paste0(prefix, "/Human/USA/WAPHL-", rand_num, "/", year)
-            }
+              new_anon_id <- NA_character_
+          
+              repeat {
+                rand_num <- sprintf("%06d", sample(1e6, 1)) #six digit random number 
+                
+                if (prefix == "MVs") {
+                  # Special measles format:
+                  # MVs/Washington.USA/week.year/WAPHL-012345
+                  wk       <- isoweek(coll_date)
+                  epi_year <- year_val    # use isoyear(coll_date) instead if you want epi-year
+                  date_tok <- sprintf("%02d.%d", wk, epi_year)
+                  
+                  new_anon_id <- paste0(
+                    "MVs/Washington.USA/",
+                    date_tok,
+                    "/WAPHL-",
+                    rand_num
+                  )
+                } else {
+                  
+                  no_host_prefixes <- c("WNV", "DenV", "ZikaV")
+                  
+                  if (prefix %in% no_host_prefixes) {
+                    new_anon_id <- paste0(
+                      prefix, "/USA/WAPHL-", rand_num, "/", year_val
+                      )
+                  } else {
+                    new_anon_id <- paste0(
+                      prefix, "/Human/USA/WAPHL-", rand_num, "/", year_val
+                      )
+                    }
+                  }
 
             
             # ensure that the new anon ID doesn't accidentally match another ID already in 
-            existing <- dbGetQuery(con, paste0(
-              "SELECT 1 FROM anon_ids WHERE anon_id = '", new_anon_id, "'"
-            ))
+               existing <- dbGetQuery(con, paste0(
+                 "SELECT 1 FROM anon_ids WHERE anon_id = '", new_anon_id, "'"
+                 ))
             
-            if (nrow(existing) == 0) {
-              # Insert new identifier into DuckDB
-              dbExecute(con, "INSERT INTO anon_ids (wa_id, anon_id, collection_date, pathogen) VALUES (?, ?, ?, ?)",
-                        params = list(wa_id, new_anon_id, year, pathogen)
-              )
-              break
-            }
-          }
-          
-          new_anon_id
-          }
-        }
-      }
+               if (nrow(existing) == 0) {
+                 dbExecute(con,
+                           "INSERT INTO anon_ids (wa_id, anon_id, collection_date, pathogen)
+                           VALUES (?, ?, ?, ?)",
+                           params = list(wa_id, new_anon_id, year_val, pathogen)
+                )
+                break
+               }
+              } # end repeat
+              
+              new_anon_id
+            } # end else (prefix not NULL)
+          } # end else (no existing_id)
+        } # end outer else
+      } # end anon_id expression
     ) %>%
     ungroup()
+  
   dbExecute(con, "CHECKPOINT")
   print(dbListFields(con, "anon_ids"))
   
   dbDisconnect(con)
   return(results)
 }
+              
+          
+  
+
+
 
 
 #function to drop the WA ID, PN organisms, Mtb, to create a df that can be exported to use for NCBI upload 
