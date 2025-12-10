@@ -15,16 +15,12 @@ secure_path <- Sys.getenv("SECURE_PATH")
 lims_common <- Sys.getenv("TABLE_COMMON")
 lims_micro <- Sys.getenv("TABLE_MICRO")
 lims_arbo <- Sys.getenv("TABLE_ARBO")
+lims_flu <-Sys.getenv("TABLE_FLU")
 database <- Sys.getenv("DATABASE")
 server <- Sys.getenv("SERVER")
 
-#server   <- db_info$server[1]
-#database <- db_info$database[1]
-#tables   <- unique(db_info$table)
 
 esc<- function(x) gsub("'", "''", x)
-
-
 
 
 #read lines to get the data section only of wonky samplesheet formatting
@@ -70,6 +66,7 @@ lims_con <- DBI::dbConnect(odbc::odbc(),
                            timezone.out = Sys.timezone()
 )
 on.exit(DBI::dbDisconnect(lims_con), add = TRUE)
+
 
 # Create temp table of IDs (best for many IDs)
 DBI::dbExecute(lims_con, "IF OBJECT_ID('tempdb..#ids') IS NOT NULL DROP TABLE #ids;")
@@ -117,15 +114,42 @@ SELECT
   b.SubmitterCity         AS submitter_city,
   b.SubmitterState        AS submitter_state,
   b.SubmitterZipcode      AS submitter_zip,
-  a.MosquitoSpecies       AS mosquito_species,   
+  a.MosquitoSpecies       AS mosquito_species,
+  f.ResultTextConclusion  AS influenza_result_text,
   b.src_table
 FROM base b
 LEFT JOIN {`database`}.dbo.{`lims_arbo`} a
   ON UPPER(RTRIM(LTRIM(CAST(a.PHLAccessionNumber AS varchar(64))))) = b.id_norm
+  
+LEFT JOIN (
+  SELECT id_norm, ResultTextConclusion
+  FROM (
+    SELECT
+      UPPER(RTRIM(LTRIM(CAST(PHLAccessionNumber AS varchar(64))))) AS id_norm,
+      f.ResultTextConclusion,
+      ROW_NUMBER() OVER (
+        PARTITION BY f.PHLAccessionNumber
+        ORDER BY f.SpecimenDateCollected DESC
+      ) AS rn
+    FROM {`database`}.dbo.{`lims_flu`} f
+    JOIN #ids i 
+      ON UPPER(RTRIM(LTRIM(CAST(f.PHLAccessionNumber AS varchar(64))))) = i.id_norm
+    WHERE
+        f.SpecimenDateCollected >= DATEADD(YEAR, -1, GETDATE())
+      AND (
+          f.ResultTextConclusion LIKE 'Influenza%virus detected%'
+        OR f.ResultTextConclusion LIKE 'Influenza%lineage detected%'
+        OR f.ResultTextConclusion LIKE 'Influenza A virus detected by RT-PCR; Subtype undetected%'
+      )
+  ) fsub
+  WHERE rn = 1
+) f
+  ON f.id_norm = b.id_norm
 ORDER BY query_id;
 ")
 
 res <- DBI::dbGetQuery(lims_con, sql)
+
 
 # Deduplicate here
 res <- res %>%
@@ -144,9 +168,42 @@ res <- res %>%
     submitter_state   = first(na.omit(submitter_state)),
     submitter_zip     = first(na.omit(submitter_zip)),
     mosquito_species  = first(na.omit(mosquito_species)),
+    influenza_result_text = dplyr::first(influenza_result_text,default = NA_character_),
     src_table         = paste(unique(src_table), collapse = "; "),
     .groups = "drop"
   )
+
+derive_flu_subtype <- function(result_text) {
+  if (is.null(result_text)) return(NA_character_)
+  
+  dplyr::case_when(
+    is.na(result_text) ~ NA_character_,
+    
+    # Pandemic H1N1
+    stringr::str_detect(result_text, "2009\\s*H1N1") ~ "A(H1N1)pdm09",
+    
+    # H3
+    stringr::str_detect(result_text, "\\(H3\\)") ~ "A(H3)",
+    
+    # H5 (if you get positives)
+    stringr::str_detect(result_text, "\\(H5\\)") ~ "A(H5)",
+    
+    # B lineages
+    stringr::str_detect(result_text, "B/Victoria") ~ "B/Victoria",
+    stringr::str_detect(result_text, "B/Yamagata") ~ "B/Yamagata",
+    
+    # A detected, subtype undetected
+    stringr::str_detect(result_text, "Subtype undetected") ~ "A (unsubtyped)",
+    
+    TRUE ~ NA_character_
+  )
+}
+
+res <- res %>%
+  mutate(
+    flu_subtype = derive_flu_subtype(influenza_result_text)
+  )
+
 #concat to single address column for submitter
 res <- res %>%
   # clean parts first: trim and treat "" as NA
