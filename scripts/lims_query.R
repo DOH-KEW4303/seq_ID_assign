@@ -120,13 +120,31 @@ SELECT
 FROM base b
 LEFT JOIN {`database`}.dbo.{`lims_arbo`} a
   ON UPPER(RTRIM(LTRIM(CAST(a.PHLAccessionNumber AS varchar(64))))) = b.id_norm
-LEFT JOIN {`database`}.dbo.{`lims_flu`} f 
-  ON UPPER(RTRIM(LTRIM(CAST(f.PHLAccessionNumber AS varchar(64))))) = b.id_norm
-  AND (
-       f.ResultTextConclusion LIKE 'Influenza%virus detected%'
-    OR f.ResultTextConclusion LIKE 'Influenza%lineage detected%'
-    OR f.ResultTextConclusion LIKE 'Influenza A virus detected by RT-PCR; Subtype undetected%'
-  )
+  
+LEFT JOIN (
+  SELECT id_norm, ResultTextConclusion
+  FROM (
+    SELECT
+      UPPER(RTRIM(LTRIM(CAST(PHLAccessionNumber AS varchar(64))))) AS id_norm,
+      f.ResultTextConclusion,
+      ROW_NUMBER() OVER (
+        PARTITION BY f.PHLAccessionNumber
+        ORDER BY f.SpecimenDateCollected DESC
+      ) AS rn
+    FROM {`database`}.dbo.{`lims_flu`} f
+    JOIN #ids i 
+      ON UPPER(RTRIM(LTRIM(CAST(f.PHLAccessionNumber AS varchar(64))))) = i.id_norm
+    WHERE
+        f.SpecimenDateCollected >= DATEADD(YEAR, -1, GETDATE())
+      AND (
+          f.ResultTextConclusion LIKE 'Influenza%virus detected%'
+        OR f.ResultTextConclusion LIKE 'Influenza%lineage detected%'
+        OR f.ResultTextConclusion LIKE 'Influenza A virus detected by RT-PCR; Subtype undetected%'
+      )
+  ) fsub
+  WHERE rn = 1
+) f
+  ON f.id_norm = b.id_norm
 ORDER BY query_id;
 ")
 
@@ -150,7 +168,7 @@ res <- res %>%
     submitter_state   = first(na.omit(submitter_state)),
     submitter_zip     = first(na.omit(submitter_zip)),
     mosquito_species  = first(na.omit(mosquito_species)),
-    influenza_result_text = first(influenza_result_text,default = NA_character_),
+    influenza_result_text = dplyr::first(influenza_result_text,default = NA_character_),
     src_table         = paste(unique(src_table), collapse = "; "),
     .groups = "drop"
   )
