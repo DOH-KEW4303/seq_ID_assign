@@ -25,12 +25,16 @@ esc<- function(x) gsub("'", "''", x)
 
 #read lines to get the data section only of wonky samplesheet formatting
 read_samplesheet_data <- function(file_path) {
-  lines <- readLines(file_path)
-  data_start <- grep("^\\[Data\\]", lines)
-  if (length(data_start) == 0) return(NULL)
-  read.csv(text = paste(lines[(data_start + 1):length(lines)], collapse = "\n"), stringsAsFactors = FALSE)
+  lines <- readLines(file_path, warn = FALSE)
+  
+  data_start <- grep("^\\[Data\\]$", lines)
+  if (length(data_start) == 0) return(NULL) #skip new samplsheets for now
+  
+  read.csv(text = paste(lines[(data_start[1] + 1):length(lines)], collapse = "\n"),
+           stringsAsFactors = FALSE, 
+           check.names = FALSE
+           )
 }
-
 
 samplesheet_dir <- "samplesheets"
 samplesheet_files <- list.files(
@@ -38,11 +42,15 @@ samplesheet_files <- list.files(
   pattern = "^SampleSheet_.*\\.csv$", 
   full.names = TRUE
   )
-samplesheets.df <-do.call(
-  rbind, 
-  lapply(samplesheet_files, read_samplesheet_data)
-  )
-head(samplesheets.df)
+
+samplesheet_list <- lapply(samplesheet_files, read_samplesheet_data)
+samplesheet_list <- Filter(Negate(is.null), samplesheet_list)
+
+if (length(samplesheet_list) == 0) {
+  stop("No old-format SampleSheets with [Data] found.")
+}
+
+samplesheets.df <- dplyr::bind_rows(samplesheet_list)
 
 samplesheets.df <- samplesheets.df %>%
   mutate(
