@@ -10,7 +10,7 @@ library(fs)
 readRenviron("../.Renviron")  #load renviron file here
 
 # Configs (including multi tables)
-#starLIMS_path <- Sys.getenv("STARLIMS_PATH")
+starLIMS_path <- Sys.getenv("STARLIMS_PATH")
 secure_path <- Sys.getenv("SECURE_PATH")
 lims_common <- Sys.getenv("TABLE_COMMON")
 lims_micro <- Sys.getenv("TABLE_MICRO")
@@ -27,7 +27,7 @@ esc<- function(x) gsub("'", "''", x)
 read_samplesheet_data <- function(file_path) {
   lines <- readLines(file_path, warn = FALSE)
   
-  data_start <- grep("^\\[Data\\]$", lines)
+  data_start <- grep("^\\s*\\[Data\\]\\s*(,.*)?$", lines, ignore.case = TRUE)
   if (length(data_start) == 0) return(NULL) #skip new samplsheets for now
   
   read.csv(text = paste(lines[(data_start[1] + 1):length(lines)], collapse = "\n"),
@@ -39,9 +39,13 @@ read_samplesheet_data <- function(file_path) {
 samplesheet_dir <- "samplesheets"
 samplesheet_files <- list.files(
   path = samplesheet_dir, 
-  pattern = "^SampleSheet_.*\\.csv$", 
+  pattern = "^SampleSheet.*\\.csv$", 
   full.names = TRUE
   )
+print(samplesheet_files)
+lines <- readLines(samplesheet_files[1], warn = FALSE)
+lines[grepl("^\\[", lines)][1:30]
+
 
 samplesheet_list <- lapply(samplesheet_files, read_samplesheet_data)
 samplesheet_list <- Filter(Negate(is.null), samplesheet_list)
@@ -80,6 +84,8 @@ on.exit(DBI::dbDisconnect(lims_con), add = TRUE)
 DBI::dbExecute(lims_con, "IF OBJECT_ID('tempdb..#ids') IS NOT NULL DROP TABLE #ids;")
 DBI::dbExecute(lims_con, "CREATE TABLE #ids (id_norm varchar(64) NOT NULL);")
 DBI::dbWriteTable(lims_con, "#ids", ids_norm, append = TRUE, temporary = TRUE)
+DBI::dbExecute(lims_con, "CREATE CLUSTERED INDEX IX_ids ON #ids(id_norm);")
+
 
 #query 
 
@@ -92,9 +98,9 @@ WITH base AS (
          '{lims_common}' AS src_table
   FROM #ids i
   JOIN {`database`}.dbo.{`lims_common`} c
-    ON UPPER(RTRIM(LTRIM(CAST(c.PHLAccessionNumber AS varchar(64))))) = i.id_norm
+    ON c.PHLAccessionNumber = i.id_norm
 
-  UNION 
+  UNION ALL
 
   SELECT i.id_norm,
          m.SpecimenDateCollected, m.SpecimenSource,
@@ -103,10 +109,30 @@ WITH base AS (
          '{lims_micro}' AS src_table
   FROM #ids i
   JOIN {`database`}.dbo.{`lims_micro`} m
-    ON UPPER(RTRIM(LTRIM(CAST(m.PHLAccessionNumber AS varchar(64))))) = i.id_norm
-    
-)
+    ON m.PHLAccessionNumber = i.id_norm
+   
+  UNION ALL
 
+  SELECT
+    i.id_norm,
+    flu_base.SpecimenDateCollected,
+    flu_base.SpecimenSource,
+    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+    '{lims_flu}' AS src_table
+  FROM #ids i
+  JOIN (
+    SELECT
+      f.PHLAccessionNumber AS id_norm,
+      MAX(f.SpecimenDateCollected) AS SpecimenDateCollected,
+      MAX(f.SpecimenSource)        AS SpecimenSource
+    FROM {`database`}.dbo.{`lims_flu`} f
+    JOIN #ids i
+      ON f.PHLAccessionNumber = i.id_norm
+    WHERE f.SpecimenDateCollected >= DATEADD(YEAR, -1, GETDATE())
+    GROUP BY f.PHLAccessionNumber
+  ) flu_base
+    ON flu_base.id_norm = i.id_norm
+)
 
 SELECT
   b.id_norm AS query_id,
@@ -123,38 +149,39 @@ SELECT
   b.SubmitterState        AS submitter_state,
   b.SubmitterZipcode      AS submitter_zip,
   a.MosquitoSpecies       AS mosquito_species,
-  f.ResultTextConclusion  AS influenza_result_text,
+  flu_res.ResultTextConclusion  AS influenza_result_text,
   b.src_table
 FROM base b
 LEFT JOIN {`database`}.dbo.{`lims_arbo`} a
-  ON UPPER(RTRIM(LTRIM(CAST(a.PHLAccessionNumber AS varchar(64))))) = b.id_norm
-  
+  ON a.PHLAccessionNumber = b.id_norm
 LEFT JOIN (
   SELECT id_norm, ResultTextConclusion
   FROM (
     SELECT
-      UPPER(RTRIM(LTRIM(CAST(PHLAccessionNumber AS varchar(64))))) AS id_norm,
+      f.PHLAccessionNumber AS id_norm,
       f.ResultTextConclusion,
       ROW_NUMBER() OVER (
         PARTITION BY f.PHLAccessionNumber
         ORDER BY f.SpecimenDateCollected DESC
       ) AS rn
     FROM {`database`}.dbo.{`lims_flu`} f
-    JOIN #ids i 
-      ON UPPER(RTRIM(LTRIM(CAST(f.PHLAccessionNumber AS varchar(64))))) = i.id_norm
+    JOIN #ids i
+      ON f.PHLAccessionNumber = i.id_norm
     WHERE
-        f.SpecimenDateCollected >= DATEADD(YEAR, -1, GETDATE())
+      f.SpecimenDateCollected >= DATEADD(YEAR, -1, GETDATE())
       AND (
-          f.ResultTextConclusion LIKE 'Influenza%virus detected%'
+           f.ResultTextConclusion LIKE 'Influenza%virus detected%'
         OR f.ResultTextConclusion LIKE 'Influenza%lineage detected%'
         OR f.ResultTextConclusion LIKE 'Influenza A virus detected by RT-PCR; Subtype undetected%'
       )
-  ) fsub
+  ) ranked
   WHERE rn = 1
-) f
-  ON f.id_norm = b.id_norm
-ORDER BY query_id;
+) flu_res
+  ON flu_res.id_norm = b.id_norm;
+  
 ")
+  
+
 
 res <- DBI::dbGetQuery(lims_con, sql)
 
@@ -171,15 +198,16 @@ res <- res %>%
     patient_gender    = first(na.omit(patient_gender)),  
     patient_age       = first(na.omit(patient_age)),
     collected_by      = first(na.omit(collected_by)),
-    submitter_address=  first(na.omit(submitter_address)),
+    submitter_address = first(na.omit(submitter_address)),
     submitter_city    = first(na.omit(submitter_city)),
     submitter_state   = first(na.omit(submitter_state)),
     submitter_zip     = first(na.omit(submitter_zip)),
     mosquito_species  = first(na.omit(mosquito_species)),
     influenza_result_text = dplyr::first(influenza_result_text,default = NA_character_),
-    src_table         = paste(unique(src_table), collapse = "; "),
+    src_table         = paste(unique(src_table), collapse = ";"),
     .groups = "drop"
   )
+
 
 derive_flu_subtype <- function(result_text) {
   if (is.null(result_text)) return(NA_character_)
