@@ -98,8 +98,10 @@ assign_anon_ids <- function(results, db_path, lock_path) {
   
   # Define descriptor-to-prefix mapping 
   descriptor_prefixes <- list(
-    "Influenza A" = "FluA",
-    "Influenza B" = "FluB",
+    "InfluenzaA" = "A",
+    "InfluenzaA_H1pdm" = "A",
+    "InfluenzaA_H3" = "A",
+    "InfluenzaA_InfB" = "B",
     "SARS-CoV-2" = "SARS-CoV-2",
     "Corynebacterium_diphtheriae" = "cDiph",
     "Corynebacterium_ulcerans" = "cUlcerans",
@@ -131,6 +133,10 @@ assign_anon_ids <- function(results, db_path, lock_path) {
   # check first for WA ID if record already exists in db. if not assign the new anon ID to the new WA ID. 
   results <- results %>%
     rename(pathogen = Description) %>%
+    mutate(
+      descriptor_norm = sub("_.*$", "", pathogen),
+      prefix = descriptor_prefixes[descriptor_norm]
+    ) %>%
     rowwise() %>%
     mutate(
       anon_id = {
@@ -199,12 +205,18 @@ assign_anon_ids <- function(results, db_path, lock_path) {
                   )
                 } else {
                   
-                  no_host_prefixes <- c("WNV", "DenV", "ZikaV")
+                  no_host_prefixes <- c("WNV", "DenV", "ZikaV", "A", "B")
                   
-                  if (prefix %in% no_host_prefixes) {
+                  if (prefix %in% c("A", "B")) {
+                    new_anon_id <- paste0(
+                      prefix, "/WASHINGTON/WAPHL-", rand_num, "/", year_val
+                    )
+                  
+                  } else if (prefix %in% no_host_prefixes) {
                     new_anon_id <- paste0(
                       prefix, "/USA/WAPHL-", rand_num, "/", year_val
                       )
+                    
                   } else {
                     new_anon_id <- paste0(
                       prefix, "/Human/USA/WAPHL-", rand_num, "/", year_val
@@ -266,6 +278,16 @@ export_metadata <- function(results) {
       ncbi_bioproject = "",
       authors = "",
       organism = pathogen,
+      `gs-Subtype` = dplyr::if_else(
+        stringr::str_detect(stringr::str_to_lower(pathogen), "influenza"),
+        flu_subtype,
+        NA_character_
+      ),
+      `bs-Subtype` = dplyr::if_else(
+        stringr::str_detect(stringr::str_to_lower(pathogen), "influenza"),
+        flu_subtype,
+        NA_character_
+      ),
       collection_date = as.character(format(as.Date(collection_date), "%Y-%m-%d")),
       collected_by = collected_by,
       `gb-sample_name` = str_extract(`bs-Isolate`, "WAPHL-\\d{6,7}"),
@@ -301,6 +323,8 @@ export_metadata <- function(results) {
       `bs-host` = `src-Host`,
       `bs-host_disease` = "",
       `bs-isolation_source` = isolation_source,
+      `bs-purpose_of_sampling` = "passive surveillance",
+      `bs-purpose_of_sequencing` = "sentinel_serveillance",
       `bs-sample_name` = str_extract(`bs-Isolate`, "WAPHL-\\d+"),
       `gs-sample_name` = "",
       `gs-covv_type` = "betacoronavirus",
@@ -329,6 +353,13 @@ export_metadata <- function(results) {
            
   csv_filename <- file.path(Sys.getenv("EXPORT_PATH"),
                           paste0("anon_metadata_", Sys.Date(), ".csv"))
+  # convert any list-columns to semicolon-separated strings 
+  final <- final %>%
+    mutate(across(where(is.list), ~ vapply(., function(x) {
+      if (is.null(x) || length(x) == 0) return(NA_character_)
+      paste(as.character(x), collapse = ";")
+    }, character(1))))
+  
   write.csv(final, csv_filename, row.names = FALSE)
   cat("Exported to:", csv_filename, "\n")
   
