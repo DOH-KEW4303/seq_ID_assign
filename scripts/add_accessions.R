@@ -1,3 +1,5 @@
+#### run to add new NCBI accession ID's to the duckdb file run `ACCESSIONS_CSV="file_accessions".csv Rscript scripts/add_accessions.R`
+
 
 library(DBI)
 library(duckdb)
@@ -28,36 +30,6 @@ CREATE TABLE IF NOT EXISTS ncbi_identifiers (
 );
 ")
 
-# ---------------------------------------------------------
-# ONE-TIME BACKFILL:
-# Populate ncbi_identifiers from legacy anon_ids columns
-# Safe to re-run (uses NOT EXISTS)
-# ---------------------------------------------------------
-
-DBI::dbExecute(con, "
-INSERT INTO ncbi_identifiers (anon_id, wa_id, pathogen, id_type, accession, segment)
-SELECT a.anon_id, a.wa_id, a.pathogen, 'genbank', a.genbank, NULL
-FROM anon_ids a
-WHERE a.genbank IS NOT NULL AND a.genbank <> ''
-  AND NOT EXISTS (
-    SELECT 1 FROM ncbi_identifiers n
-    WHERE n.anon_id = a.anon_id AND n.id_type = 'genbank'
-  );
-")
-
-DBI::dbExecute(con, "
-INSERT INTO ncbi_identifiers (anon_id, wa_id, pathogen, id_type, accession, segment)
-SELECT a.anon_id, a.wa_id, a.pathogen, 'biosample', a.biosample, NULL
-FROM anon_ids a
-WHERE a.biosample IS NOT NULL AND a.biosample <> ''
-  AND NOT EXISTS (
-    SELECT 1 FROM ncbi_identifiers n
-    WHERE n.anon_id = a.anon_id AND n.id_type = 'biosample'
-  );
-")
-
-
-
 # Read the accession CSV
 acc <- read_csv(csv_path, show_col_types = FALSE)
 
@@ -83,21 +55,6 @@ acc <- acc %>%
 # Register as temporary DuckDB table
 dbExecute(con, "DROP TABLE IF EXISTS staging_acc;")
 dbWriteTable(con, "staging_acc", acc, temporary = TRUE, overwrite = TRUE)
-
-dbGetQuery(con, "
-SELECT
-  a.wa_id,
-  a.anon_id,
-  s.sequence_id,
-  s.accession,
-  s.id_type,
-  s.segment
-FROM anon_ids a
-JOIN staging_acc s
-  ON a.anon_id LIKE '%' || s.waphl_base || '%'
-LIMIT 20;
-")
-
 
 rows_inserted <- dbExecute(con, "
 INSERT INTO ncbi_identifiers (anon_id, wa_id, pathogen, id_type, accession, segment)
@@ -126,27 +83,6 @@ WHERE NOT EXISTS (
 );
 ")
 
-# --- Debug: show unmatched staging rows (no anon_ids match) ---
-unmapped <- dbGetQuery(con, "
-SELECT s.sequence_id, s.waphl_base, s.id_type, s.accession
-FROM staging_acc s
-LEFT JOIN anon_ids a
-  ON a.anon_id LIKE '%' || s.waphl_base || '%'
-WHERE a.anon_id IS NULL
-LIMIT 50;
-")
-if (nrow(unmapped) > 0) {
-  message("WARNING: These rows did not match any anon_id (showing up to 50):")
-  print(unmapped)
-}
-
-# --- Preview inserted identifiers ---
-print(dbGetQuery(con, "
-SELECT wa_id, anon_id, id_type, accession, segment
-FROM ncbi_identifiers
-ORDER BY anon_id, id_type, segment, accession
-LIMIT 25;
-"))
 
 
 
