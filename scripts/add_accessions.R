@@ -7,7 +7,10 @@ library(stringr)
 
 # --- Config ---
 db_path <- Sys.getenv("DUCKDB_PATH_PROD")
-csv_path <- file.path(getwd(), "flu_accessions.csv")
+csv_path <- Sys.getenv(
+  "ACCESSIONS_CSV",
+  unset = file.path(getwd(), "accessions.csv")
+)
 fill_missing_only <- TRUE   # TRUE = fill only NULLs; FALSE = overwrite existing
 
 # --- Connect ---

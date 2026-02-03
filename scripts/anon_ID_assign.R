@@ -96,6 +96,28 @@ assign_anon_ids <- function(results, db_path, lock_path) {
   dbExecute(con, "ALTER TABLE anon_ids ADD COLUMN IF NOT EXISTS biosample TEXT;")
   dbExecute(con, "ALTER TABLE anon_ids ADD COLUMN IF NOT EXISTS genbank   TEXT;")
   
+  
+  # ---- NEW: table to store multiple NCBI identifiers per sample (segments, SRRs, etc.) ----
+  dbExecute(con, "
+  CREATE TABLE IF NOT EXISTS ncbi_identifiers (
+    anon_id    TEXT,
+    wa_id      TEXT,
+    pathogen   TEXT,
+    id_type    TEXT,        
+    accession  TEXT,
+    segment    TEXT
+  )
+")
+  
+  # Schema guard (safe if table existed previously with fewer columns)
+  dbExecute(con, "ALTER TABLE ncbi_identifiers ADD COLUMN IF NOT EXISTS anon_id    TEXT;")
+  dbExecute(con, "ALTER TABLE ncbi_identifiers ADD COLUMN IF NOT EXISTS wa_id      TEXT;")
+  dbExecute(con, "ALTER TABLE ncbi_identifiers ADD COLUMN IF NOT EXISTS pathogen   TEXT;")
+  dbExecute(con, "ALTER TABLE ncbi_identifiers ADD COLUMN IF NOT EXISTS id_type    TEXT;")
+  dbExecute(con, "ALTER TABLE ncbi_identifiers ADD COLUMN IF NOT EXISTS accession  TEXT;")
+  dbExecute(con, "ALTER TABLE ncbi_identifiers ADD COLUMN IF NOT EXISTS segment    TEXT;")
+  
+  
   # Define descriptor-to-prefix mapping 
   descriptor_prefixes <- list(
     "InfluenzaA" = "A",
