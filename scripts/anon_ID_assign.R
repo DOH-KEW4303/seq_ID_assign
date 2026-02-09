@@ -121,6 +121,8 @@ assign_anon_ids <- function(results, db_path, lock_path) {
   # Define descriptor-to-prefix mapping 
   descriptor_prefixes <- list(
     "InfluenzaA" = "A",
+    "InfA_H1" = "A",
+    "InfA_H3" ="A",
     "IfnA_H1pdm" = "A",
     "IfnA_H3" = "A",
     "IfnB" = "B",
