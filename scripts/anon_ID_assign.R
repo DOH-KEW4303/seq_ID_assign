@@ -285,9 +285,18 @@ assign_anon_ids <- function(results, db_path, lock_path) {
 
 
 
-#function to drop the WA ID, PN organisms, Mtb, to create a df that can be exported to use for NCBI upload 
+#function to clean the metadata,create a df that can be exported to use for NCBI upload 
+
 export_metadata <- function(results) {
   excluded_sources <- c("Raw Wastewater Composite", "Raw Wastewater Grab")
+  
+  bioproject_map <- c(
+    flu_a   = "PRJNA1400571",
+    flu_b   = "PRJNA1400040",
+    measles = "PRJNA1365947",
+    cov2    = "PRJNA749781",
+    wnv     = "PRJNA1320692"
+  )
   
   results_filtered <- results %>% 
     filter(!is.na(anon_id) & anon_id != "") %>%
@@ -297,38 +306,60 @@ export_metadata <- function(results) {
   
   final <- results_filtered %>%
     select(-wa_id) %>%
-    rename( `bs-Isolate` = anon_id) %>%
+    rename( `bs-strain` = anon_id) %>%
     mutate(
-      ncbi_bioproject = "",
-      authors = "",
-      organism = pathogen,
-      `gs-Subtype` = dplyr::if_else(
+      ncbi_bioproject = dplyr::case_when(
+        descriptor_norm %in% c("InfluenzaA", "InfA", "IfnA") ~ bioproject_map[["flu_a"]],
+        descriptor_norm %in% c("InfluenzaB", "InfB", "IfnB") ~ bioproject_map[["flu_b"]],
+        descriptor_norm %in% c("Measles", "MeV") ~ bioproject_map[["measles"]],
+        descriptor_norm %in% c("SARS-CoV-2") ~ bioproject_map[["cov2"]],
+        descriptor_norm %in% c("WNV") ~ bioproject_map[["wnv"]],
+        TRUE ~ NA_character_
+      ),
+      authors = "Dykema,P.; Hanson,N.;Yang,Q.;Lucas,D.;Grimmet Jr,S.;Johnson,J.;Waterman,K.",
+      organism = dplyr::case_when(
+        # Influenza A
+        stringr::str_detect(stringr::str_to_lower(pathogen), "infa|influenzaa|influenza a") ~ 
+          "influenza a virus",
+        
+        # Influenza B
+        stringr::str_detect(stringr::str_to_lower(pathogen), "infb|influenza b") ~ 
+          "influenza b virus",
+        
+        # Measles
+        stringr::str_detect(stringr::str_to_lower(pathogen), "measles|mev") ~ 
+          "Measles morbillivirus",
+        
+        TRUE ~ NA_character_
+      ),
+      `src-Serotype` = dplyr::if_else(
         stringr::str_detect(stringr::str_to_lower(pathogen), "influenza"),
         flu_subtype,
         NA_character_
       ),
-      `bs-Subtype` = dplyr::if_else(
+      `bs-subtype` = dplyr::if_else(
         stringr::str_detect(stringr::str_to_lower(pathogen), "influenza"),
         flu_subtype,
         NA_character_
       ),
       collection_date = as.character(format(as.Date(collection_date), "%Y-%m-%d")),
       collected_by = collected_by,
-      `gb-sample_name` = str_extract(`bs-Isolate`, "WAPHL-\\d{6,7}"),
+      `gb-sample_name` = str_extract(`bs-strain`, "WAPHL-\\d{6,7}"),
       `src-geo_loc_name` = if_else(
         is.na(county),
         "USA:Washington",
         paste0("USA:Washington,", county)
       ),
       `src-Host` = "Homo sapiens",
-      `src-Isolate` = `bs-Isolate`,
+      `src-Strain` = `bs-strain`,
+      `bs-isolate` = `gb-sample_name`,
+      `src-Isolate` = `gb-sample_name`,
       `src-Isolation_source` = isolation_source,
       `bs-sample_title` = "",
       `bs-collected_by` = collected_by,
       `bs-geo_loc_name` = `src-geo_loc_name`,
       `bs-host` = "Homo sapiens",
       sequence_name = "",
-      `gb-sample_name` = str_extract(`bs-Isolate`, "WAPHL-\\d+"),
       `src-geo_loc_name` = if_else(
         is.na(county),
         "USA:Washington",
@@ -338,7 +369,7 @@ export_metadata <- function(results) {
         !is.na(mosquito_species) & mosquito_species != "" ~ mosquito_species,
         TRUE ~ "Homo sapiens"
       ),
-      `src-Isolate` = `bs-Isolate`,
+      `src-Isolate` = `bs-isolate`,
       `src-Isolation_source` = isolation_source,
       `bs-sample_title` = "",
       `bs-collected_by` = collected_by,
@@ -349,20 +380,7 @@ export_metadata <- function(results) {
       `bs-isolation_source` = isolation_source,
       `bs-purpose_of_sampling` = "passive surveillance",
       `bs-purpose_of_sequencing` = "sentinel_serveillance",
-      `bs-sample_name` = str_extract(`bs-Isolate`, "WAPHL-\\d+"),
-      `gs-sample_name` = "",
-      `gs-covv_type` = "betacoronavirus",
-      `gs-covv_passage` = "Original",
-      `gs-covv_location` = `src-geo_loc_name`,
-      `gs-covv_host` = "Homo sapiens",
-      `gs-covv_sex` = patient_gender,
-      `gs-covv_patient_age` = patient_age,
-      `gs-covv_patient_status` = "Unknown",
-      `gs-covv_seq_technology` = "Illumina MiSeq",
-      `gs-covv_orig_lab` = collected_by,
-      `gs-covv_orig_lab_address` = submitter_full_address,
-      `gs-covv_comments` = "",
-      `gs-comment_type` = "",
+      `bs-sample_name` = `gb-sample_name`,
       illumina_sequence_instrument = "",
       illumina_library_source = "",
       illumina_library_strategy = "",
@@ -372,17 +390,36 @@ export_metadata <- function(results) {
       illumina_sra_file_path2 = ""
     ) %>%
 
-    select(-county,-state,-country,-src_table, -mosquito_species)
-           
-           
-  csv_filename <- file.path(Sys.getenv("EXPORT_PATH"),
-                          paste0("anon_metadata_", Sys.Date(), ".csv"))
+    dplyr::select(-county, -state, -country, -src_table, -mosquito_species, -descriptor_norm)
+  
   # convert any list-columns to semicolon-separated strings 
   final <- final %>%
     mutate(across(where(is.list), ~ vapply(., function(x) {
       if (is.null(x) || length(x) == 0) return(NA_character_)
       paste(as.character(x), collapse = ";")
     }, character(1))))
+  
+  #export schema 
+  keep_cols <- c(
+    "collection_date", "flu_subtype", "bs-strain", "ncbi_bioproject", "authors", "organism",
+    "src-Serotype", "bs-subtype", "gb-sample_name", "src-geo_loc_name", "src-Host",
+    "src-Strain", "bs-isolate", "src-Isolate", "src-Isolation_source",
+    "bs-sample_title", "bs-collected_by", "bs-geo_loc_name", "bs-host", "sequence_name",
+    "bs-lat_lon", "bs-host_disease", "bs-isolation_source", "bs-purpose_of_sampling",
+    "bs-purpose_of_sequencing", "bs-sample_name", "illumina_sequence_instrument",
+    "illumina_library_source", "illumina_library_strategy", "illumina_library_layout",
+    "illumina_library_protocol", "illumina_sra_file_path1", "illumina_sra_file_path2"
+  )
+  
+  missing_cols <- setdiff(keep_cols, names(final))
+  for (col in missing_cols) final[[col]] <- NA_character_
+  final <- final[, keep_cols]
+           
+  csv_filename <- file.path(Sys.getenv("EXPORT_PATH"),
+                          paste0("anon_metadata_", Sys.Date(), ".csv"))
+  
+  
+  
   
   write.csv(final, csv_filename, row.names = FALSE)
   cat("Exported to:", csv_filename, "\n")
