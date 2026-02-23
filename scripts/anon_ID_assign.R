@@ -125,6 +125,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
     "InfA_H3" ="A",
     "IfnA_H1pdm" = "A",
     "IfnA_H3" = "A",
+    "InfA" = "A",
     "IfnB" = "B",
     "SARS-CoV-2" = "SARS-CoV-2",
     "Corynebacterium_diphtheriae" = "cDiph",
