@@ -416,8 +416,10 @@ export_metadata <- function(results) {
   for (col in missing_cols) final[[col]] <- NA_character_
   final <- final[, keep_cols]
            
-  csv_filename <- file.path(Sys.getenv("EXPORT_PATH"),
-                          paste0("anon_metadata_", Sys.Date(), ".csv"))
+  csv_filename <- file.path(
+    Sys.getenv("EXPORT_PATH"),
+    sprintf("anon_metadata_%s.csv", format(Sys.time(), "%Y%m%d_%H%M%S"))
+  )
   
   
   
