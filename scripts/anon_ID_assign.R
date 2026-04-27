@@ -139,6 +139,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
     "Hepatitis B" = "HepBV",
     "Zika" = "ZikaV",
     "WNV" = "WNV",
+    "Norovirus" = "Norovirus",
     "Dengue" = "DenV",
     "Mpox" = "MpoxV",
     "RSV-A" = "RSvA",
