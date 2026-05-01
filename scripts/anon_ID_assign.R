@@ -142,8 +142,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
     "Norovirus" = "Norovirus",
     "Dengue" = "DenV",
     "Mpox" = "MpoxV",
-    "RSV-A" = "RSvA",
-    "RSV-B" = "RSVB",
+    "RSV" = "HRSV",
     "HSV" = "HSV",
     "Mycobacterium_tuberculosis" = "Mtb",
     "Staphylococcus_aureus" = "staphA",
@@ -163,7 +162,12 @@ assign_anon_ids <- function(results, db_path, lock_path) {
     rename(pathogen = Description) %>%
     mutate(
       descriptor_norm = sub("_.*$", "", pathogen),
-      prefix = descriptor_prefixes[descriptor_norm]
+      flu_subtype = case_when(
+        pathogen %in% c("InfA_H1", "IfnA_H1pdm") ~ "H1N1",
+        pathogen %in% c("InfA_H3", "IfnA_H3") ~ "H3",
+        pathogen %in% c("IfnB", "InfB") ~ "B",
+        TRUE ~ NA_character_
+      )
     ) %>%
     rowwise() %>%
     mutate(
@@ -189,15 +193,15 @@ assign_anon_ids <- function(results, db_path, lock_path) {
           
         } else {
           existing_id <- dbGetQuery(con, paste0(
-          "SELECT anon_id FROM anon_ids WHERE wa_id = '", wa_id, "'"
-        ))
-        
+            "SELECT anon_id FROM anon_ids WHERE wa_id = '", wa_id, "'"
+          ))
+          
           if (nrow(existing_id) > 0) {
-           msg <- paste("WA ID already exists in database:", wa_id, "→ using existing anon_id:", existing_id$anon_id)
-           warning(msg)
-           log_message(msg)
-           existing_id$anon_id
-           
+            msg <- paste("WA ID already exists in database:", wa_id, "→ using existing anon_id:", existing_id$anon_id)
+            warning(msg)
+            log_message(msg)
+            existing_id$anon_id
+            
           } else {
             coll_date <- as.Date(collection_date)
             year_val  <- year(coll_date)
@@ -214,15 +218,13 @@ assign_anon_ids <- function(results, db_path, lock_path) {
               
             } else {
               new_anon_id <- NA_character_
-          
+              
               repeat {
-                rand_num <- sprintf("%06d", sample(1e6, 1)) #six digit random number 
+                rand_num <- sprintf("%06d", sample(1e6, 1))
                 
                 if (prefix == "MVs") {
-                  # Special measles format:
-                  # MVs/Washington.USA/week.year/WAPHL-012345
                   wk       <- isoweek(coll_date)
-                  epi_year <- year_val    # use isoyear(coll_date) instead if you want epi-year
+                  epi_year <- year_val
                   date_tok <- sprintf("%02d.%d", wk, epi_year)
                   
                   new_anon_id <- paste0(
@@ -239,40 +241,39 @@ assign_anon_ids <- function(results, db_path, lock_path) {
                     new_anon_id <- paste0(
                       prefix, "/WASHINGTON/WAPHL-", rand_num, "/", year_val
                     )
-                  
+                    
                   } else if (prefix %in% no_host_prefixes) {
                     new_anon_id <- paste0(
                       prefix, "/USA/WAPHL-", rand_num, "/", year_val
-                      )
+                    )
                     
                   } else {
                     new_anon_id <- paste0(
                       prefix, "/Human/USA/WAPHL-", rand_num, "/", year_val
-                      )
-                    }
+                    )
                   }
-
-            
-            # ensure that the new anon ID doesn't accidentally match another ID already in 
-               existing <- dbGetQuery(con, paste0(
-                 "SELECT 1 FROM anon_ids WHERE anon_id = '", new_anon_id, "'"
-                 ))
-            
-               if (nrow(existing) == 0) {
-                 dbExecute(con,
-                           "INSERT INTO anon_ids (wa_id, anon_id, collection_date, pathogen)
-                           VALUES (?, ?, ?, ?)",
-                           params = list(wa_id, new_anon_id, year_val, pathogen)
-                )
-                break
-               }
-              } # end repeat
+                }
+                
+                existing <- dbGetQuery(con, paste0(
+                  "SELECT 1 FROM anon_ids WHERE anon_id = '", new_anon_id, "'"
+                ))
+                
+                if (nrow(existing) == 0) {
+                  dbExecute(
+                    con,
+                    "INSERT INTO anon_ids (wa_id, anon_id, collection_date, pathogen)
+                   VALUES (?, ?, ?, ?)",
+                    params = list(wa_id, new_anon_id, year_val, pathogen)
+                  )
+                  break
+                }
+              }
               
               new_anon_id
-            } # end else (prefix not NULL)
-          } # end else (no existing_id)
-        } # end outer else
-      } # end anon_id expression
+            }
+          }
+        }
+      }
     ) %>%
     ungroup()
   
@@ -405,7 +406,7 @@ export_metadata <- function(results) {
   
   #export schema 
   keep_cols <- c(
-    "collection_date", "flu_subtype", "bs-strain", "ncbi_bioproject", "authors", "organism",
+    "collection_date","flu_subtype","bs-strain", "ncbi_bioproject", "authors", "organism",
     "src-Serotype", "bs-subtype", "gb-sample_name", "src-geo_loc_name", "src-Host",
     "src-Strain", "bs-isolate", "src-Isolate", "src-Isolation_source",
     "bs-sample_title", "bs-collected_by", "bs-geo_loc_name", "bs-host", "sequence_name",
