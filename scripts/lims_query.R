@@ -16,7 +16,7 @@ secure_path <- Sys.getenv("SECURE_PATH")
 lims_common <- Sys.getenv("TABLE_COMMON")
 lims_micro <- Sys.getenv("TABLE_MICRO")
 lims_arbo <- Sys.getenv("TABLE_ARBO")
-lims_flu <-Sys.getenv("TABLE_FLU")
+#lims_flu <-Sys.getenv("TABLE_FLU")
 database <- Sys.getenv("DATABASE")
 server <- Sys.getenv("SERVER")
 
@@ -132,29 +132,8 @@ WITH base AS (
   FROM #ids i
   JOIN {`database`}.dbo.{`lims_micro`} m
     ON m.PHLAccessionNumber = i.id_norm
-   
-  UNION ALL
-
-  SELECT
-    i.id_norm,
-    flu_base.SpecimenDateCollected,
-    flu_base.SpecimenSource,
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-    '{lims_flu}' AS src_table
-  FROM #ids i
-  JOIN (
-    SELECT
-      f.PHLAccessionNumber AS id_norm,
-      MAX(f.SpecimenDateCollected) AS SpecimenDateCollected,
-      MAX(f.SpecimenSource)        AS SpecimenSource
-    FROM {`database`}.dbo.{`lims_flu`} f
-    JOIN #ids i
-      ON f.PHLAccessionNumber = i.id_norm
-    WHERE f.SpecimenDateCollected >= DATEADD(YEAR, -1, GETDATE())
-    GROUP BY f.PHLAccessionNumber
-  ) flu_base
-    ON flu_base.id_norm = i.id_norm
 )
+
 
 SELECT
   b.id_norm AS query_id,
@@ -171,38 +150,11 @@ SELECT
   b.SubmitterState        AS submitter_state,
   b.SubmitterZipcode      AS submitter_zip,
   a.MosquitoSpecies       AS mosquito_species,
-  flu_res.ResultTextConclusion  AS influenza_result_text,
   b.src_table
 FROM base b
 LEFT JOIN {`database`}.dbo.{`lims_arbo`} a
   ON a.PHLAccessionNumber = b.id_norm
-LEFT JOIN (
-  SELECT id_norm, ResultTextConclusion
-  FROM (
-    SELECT
-      f.PHLAccessionNumber AS id_norm,
-      f.ResultTextConclusion,
-      ROW_NUMBER() OVER (
-        PARTITION BY f.PHLAccessionNumber
-        ORDER BY f.SpecimenDateCollected DESC
-      ) AS rn
-    FROM {`database`}.dbo.{`lims_flu`} f
-    JOIN #ids i
-      ON f.PHLAccessionNumber = i.id_norm
-    WHERE
-      f.SpecimenDateCollected >= DATEADD(YEAR, -1, GETDATE())
-      AND (
-           f.ResultTextConclusion LIKE 'Influenza%virus detected%'
-        OR f.ResultTextConclusion LIKE 'Influenza%lineage detected%'
-        OR f.ResultTextConclusion LIKE 'Influenza A virus detected by RT-PCR; Subtype undetected%'
-      )
-  ) ranked
-  WHERE rn = 1
-) flu_res
-  ON flu_res.id_norm = b.id_norm;
-  
 ")
-  
 
 
 res <- DBI::dbGetQuery(lims_con, sql)
@@ -225,42 +177,10 @@ res <- res %>%
     submitter_state   = first(na.omit(submitter_state)),
     submitter_zip     = first(na.omit(submitter_zip)),
     mosquito_species  = first(na.omit(mosquito_species)),
-    influenza_result_text = dplyr::first(influenza_result_text,default = NA_character_),
     src_table         = paste(unique(src_table), collapse = ";"),
     .groups = "drop"
   )
 
-
-derive_flu_subtype <- function(result_text) {
-  if (is.null(result_text)) return(NA_character_)
-  
-  dplyr::case_when(
-    is.na(result_text) ~ NA_character_,
-    
-    # Pandemic H1N1
-    stringr::str_detect(result_text, "2009\\s*H1N1") ~ "A(H1N1)pdm09",
-    
-    # H3
-    stringr::str_detect(result_text, "\\(H3\\)") ~ "A(H3)",
-    
-    # H5 (if you get positives)
-    stringr::str_detect(result_text, "\\(H5\\)") ~ "A(H5)",
-    
-    # B lineages
-    stringr::str_detect(result_text, "B/Victoria") ~ "B/Victoria",
-    stringr::str_detect(result_text, "B/Yamagata") ~ "B/Yamagata",
-    
-    # A detected, subtype undetected
-    stringr::str_detect(result_text, "Subtype undetected") ~ "A (unsubtyped)",
-    
-    TRUE ~ NA_character_
-  )
-}
-
-res <- res %>%
-  mutate(
-    flu_subtype = derive_flu_subtype(influenza_result_text)
-  )
 
 #concat to single address column for submitter
 res <- res %>%

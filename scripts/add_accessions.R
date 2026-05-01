@@ -43,7 +43,7 @@ stopifnot(all(c("id_type", "accession", "sequence_id") %in% names(acc)))
 acc <- acc %>%
   mutate(
     id_type    = tolower(str_trim(as.character(id_type))),
-    accession  = str_trim(as.character(accession)),
+    accession = str_trim(iconv(as.character(accession), from = "", to = "UTF-8", sub = "")),
     sequence_id = toupper(str_trim(as.character(sequence_id))),
     waphl_base = str_extract(sequence_id, "WAPHL-\\d+"),
     segment    = str_match(sequence_id, "WAPHL-\\d+-(\\d+)$")[,2]
