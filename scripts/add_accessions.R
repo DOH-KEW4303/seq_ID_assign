@@ -8,6 +8,12 @@ library(dplyr)
 library(stringr)
 
 # --- Config ---
+clean_text <- function(x) {
+  x <- as.character(x)
+  x <- iconv(x, from = "", to = "UTF-8", sub = "")
+  stringr::str_trim(x)
+}
+
 db_path <- Sys.getenv("DUCKDB_PATH_PROD")
 csv_path <- Sys.getenv(
   "ACCESSIONS_CSV",
@@ -30,8 +36,16 @@ CREATE TABLE IF NOT EXISTS ncbi_identifiers (
 );
 ")
 
-# Read the accession CSV
-acc <- read_csv(csv_path, show_col_types = FALSE)
+# Read accession file: supports .csv or .tsv/.txt
+ext <- tools::file_ext(csv_path)
+
+acc <- if (tolower(ext) %in% c("tsv", "txt")) {
+  readr::read_tsv(csv_path, show_col_types = FALSE)
+} else if (tolower(ext) == "csv") {
+  readr::read_csv(csv_path, show_col_types = FALSE)
+} else {
+  stop("Unsupported accession file type: ", ext)
+}
 
 # Normalize column names + values
 acc <- acc |>
@@ -42,11 +56,11 @@ stopifnot(all(c("id_type", "accession", "sequence_id") %in% names(acc)))
 
 acc <- acc %>%
   mutate(
-    id_type    = tolower(str_trim(as.character(id_type))),
-    accession = str_trim(iconv(as.character(accession), from = "", to = "UTF-8", sub = "")),
-    sequence_id = toupper(str_trim(as.character(sequence_id))),
-    waphl_base = str_extract(sequence_id, "WAPHL-\\d+"),
-    segment    = str_match(sequence_id, "WAPHL-\\d+-(\\d+)$")[,2]
+    id_type     = tolower(clean_text(id_type)),
+    accession   = clean_text(accession),
+    sequence_id = toupper(clean_text(sequence_id)),
+    waphl_base  = str_extract(sequence_id, "WAPHL-\\d+"),
+    segment     = str_match(sequence_id, "WAPHL-\\d+-(\\d+)$")[,2]
   ) %>%
   filter(!is.na(waphl_base), !is.na(accession), accession != "") %>%
   filter(id_type %in% c("genbank", "biosample", "sra")) %>%
