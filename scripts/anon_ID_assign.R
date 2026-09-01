@@ -1,5 +1,6 @@
 #################################
-#Reads in rds file with lims query results, connects to duckdb and executes function to assign random identifier to wach WA record. writes to duckdb file on the y drive. 
+### Reads in rds file with the lims query results, connects to duckdb file and executes function to assign random identifier to each WA record. writes the new identifiers to duckdb file on the y drive and
+exports metadata to csv file locally to be used with SeqSender ###
 library(DBI)
 library(duckdb)
 library(dplyr)
@@ -313,7 +314,7 @@ export_metadata <- function(results) {
     select(-wa_id) %>%
     rename( `bs-strain` = anon_id) %>%
     mutate(
-      ncbi_bioproject = dplyr::case_when(
+      bioproject = dplyr::case_when(
         descriptor_norm %in% c("InfluenzaA", "InfA", "IfnA") ~ bioproject_map[["flu_a"]],
         descriptor_norm %in% c("InfluenzaB", "InfB", "IfnB") ~ bioproject_map[["flu_b"]],
         descriptor_norm %in% c("Measles", "MeV") ~ bioproject_map[["measles"]],
