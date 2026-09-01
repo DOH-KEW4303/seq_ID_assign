@@ -1,4 +1,5 @@
-
+### You will need a .Renviron file containing starlims path, database info, server info etc. Script will extract internal ID from the Basespace samplesheet (along with the pathogen descriptor), confirm new samples (not already in DuckDB file), query LIMS for 
+the required metadata. Query results are saved and will be exported to a csv file with a later script ###
 
 #load libraries 
 library(DBI)
@@ -224,7 +225,7 @@ if (!dir_exists(archive_dir)) {
   dir_create(archive_dir)
 }
 
-# Move ALL csv files from samplesheets/ to archive/
+# Move ALL samplesheet files from samplesheets/ to archive/
 samplesheet_files <- dir_ls(samplesheet_dir, glob = "*.csv", type = "file")
 
 for (file in samplesheet_files) {
