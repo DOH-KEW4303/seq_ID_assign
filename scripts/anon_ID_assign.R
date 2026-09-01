@@ -1,6 +1,6 @@
 #################################
 ### Reads in rds file with the lims query results, connects to duckdb file and executes function to assign random identifier to each WA record. writes the new identifiers to duckdb file on the y drive and
-exports metadata to csv file locally to be used with SeqSender ###
+### exports metadata to csv file locally to be used with SeqSender
 library(DBI)
 library(duckdb)
 library(dplyr)
