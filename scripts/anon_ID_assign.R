@@ -76,7 +76,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
     }
   }, add = TRUE)
   
-  # Connect to duckdb (read-only = FALSE because we're inserting)
+  # Connect to duckdb
   con <- dbConnect(duckdb::duckdb(), dbdir = db_path, read_only = FALSE)
   
   
@@ -121,29 +121,23 @@ assign_anon_ids <- function(results, db_path, lock_path) {
   
   # Define descriptor-to-prefix mapping 
   descriptor_prefixes <- list(
-    "InfluenzaA" = "A",
-    "InfA_H1" = "A",
-    "InfA_H3" ="A",
-    "InfA_H1_H3" = "A",
-    "IfnA_H1pdm" = "A",
-    "IfnA_H3" = "A",
-    "InfA" = "A",
-    "IfnB" = "B",
-    "InfB" = "B",
-    "SARS-CoV-2" = "SARS-CoV-2",
-    "Corynebacterium_diphtheriae" = "cDiph",
+    "Alphainfluenzavirus influenzae" = "A",
+    "Betainfluenzavirus influenzae" = "B",
+    "Betacoronavirus pandemicum" = "SARS-CoV-2",
+    "Haemophilus influenzae" = "Hib",
+    "Burkholderia contaminans" = "burkh",
     "Corynebacterium_ulcerans" = "cUlcerans",
-    "Measles" = "MVs",
-    "Mumps_virus" = "MuV",
+    "Morbillivirus hominis" = "MVs",
+    "Orthorubulavirus parotitidis" = "MuV",
     "Adenovirus" = "HAdV",
     "HIV" = "hIV",
     "Hepatitis B" = "HepBV",
     "Zika" = "ZikaV",
-    "WNV" = "WNV",
+    "Orthoflavivirus nilense" = "WNV",
     "Norovirus" = "Norovirus",
     "Dengue" = "DenV",
-    "Mpox" = "MpoxV",
-    "RSV" = "HRSV",
+    "Orthopoxvirus monkeypox" = "MpoxV",
+    "Orthopneumovirus hominis" = "HRSV",
     "HSV" = "HSV",
     "Mycobacterium_tuberculosis" = "Mtb",
     "Staphylococcus_aureus" = "staphA",
@@ -159,23 +153,43 @@ assign_anon_ids <- function(results, db_path, lock_path) {
   
   
   # check first for WA ID if record already exists in db. if not assign the new anon ID to the new WA ID. 
-  results <- results %>%
-    rename(pathogen = Description) %>%
-    mutate(
-      descriptor_norm = sub("_.*$", "", pathogen),
-      flu_subtype = case_when(
-        pathogen %in% c("InfA_H1", "IfnA_H1pdm") ~ "H1N1",
-        pathogen %in% c("InfA_H3", "IfnA_H3") ~ "H3",
-        pathogen %in% c("IfnB", "InfB") ~ "B",
-        TRUE ~ NA_character_
+  
+  get_prefix <- function(pathogen, mapping) {
+    
+    # Handle missing/empty values safely
+    if (is.null(pathogen) || length(pathogen) == 0 ||
+        is.na(pathogen) || pathogen == "") {
+      return(NA_character_)
+    }
+    
+    # Test each mapping name against the pathogen string
+    matches <- names(mapping)[
+      vapply(
+        names(mapping),
+        function(x) {
+          str_detect(
+            pathogen,
+            fixed(x, ignore_case = TRUE)
+          )
+        },
+        logical(1)
       )
-    ) %>%
+    ]
+    
+    if (length(matches) == 0) {
+      return(NA_character_)
+    }
+    
+    mapping[[matches[1]]]
+  }
+  results <- results %>%
     rowwise() %>%
     mutate(
       anon_id = {
-        if (!is.na(isolation_source) && 
+        if (isTRUE(
+          !is.na(isolation_source) && 
             grepl("^Raw\\s*Wastewater\\s*(Composite|Grab)$",
-                  isolation_source, ignore.case = TRUE)) {
+                  isolation_source, ignore.case = TRUE))) {
           msg <- paste("Skipping WA ID due to excluded isolation_source:",
                        wa_id, "-", isolation_source)
           warning(msg)
@@ -197,7 +211,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
             "SELECT anon_id FROM anon_ids WHERE wa_id = '", wa_id, "'"
           ))
           
-          if (nrow(existing_id) > 0) {
+          if (isTRUE(nrow(existing_id) > 0)) {
             msg <- paste("WA ID already exists in database:", wa_id, "→ using existing anon_id:", existing_id$anon_id)
             warning(msg)
             log_message(msg)
@@ -206,9 +220,9 @@ assign_anon_ids <- function(results, db_path, lock_path) {
           } else {
             coll_date <- as.Date(collection_date)
             year_val  <- year(coll_date)
-            prefix    <- descriptor_prefixes[[pathogen]]
+            prefix <- get_prefix(pathogen, descriptor_prefixes)
             
-            if (is.null(prefix)) {
+            if (is.na(prefix) || prefix == "") {
               msg <- paste(
                 "Unknown pathogen descriptor for WA ID:",
                 wa_id, "-", pathogen, "→ skipping row."
@@ -223,7 +237,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
               repeat {
                 rand_num <- sprintf("%06d", sample(1e6, 1))
                 
-                if (prefix == "MVs") {
+                if (isTRUE(prefix == "MVs")) {
                   wk       <- isoweek(coll_date)
                   epi_year <- year_val
                   date_tok <- sprintf("%02d.%d", wk, epi_year)
@@ -238,12 +252,12 @@ assign_anon_ids <- function(results, db_path, lock_path) {
                   
                   no_host_prefixes <- c("WNV", "DenV", "ZikaV", "A", "B")
                   
-                  if (prefix %in% c("A", "B")) {
+                  if (isTRUE(prefix %in% c("A", "B"))) {
                     new_anon_id <- paste0(
                       prefix, "/WASHINGTON/WAPHL-", rand_num, "/", year_val
                     )
                     
-                  } else if (prefix %in% no_host_prefixes) {
+                  } else if (isTRUE(prefix %in% no_host_prefixes)) {
                     new_anon_id <- paste0(
                       prefix, "/USA/WAPHL-", rand_num, "/", year_val
                     )
@@ -259,7 +273,7 @@ assign_anon_ids <- function(results, db_path, lock_path) {
                   "SELECT 1 FROM anon_ids WHERE anon_id = '", new_anon_id, "'"
                 ))
                 
-                if (nrow(existing) == 0) {
+                if (isTRUE(nrow(existing) == 0)) {
                   dbExecute(
                     con,
                     "INSERT INTO anon_ids (wa_id, anon_id, collection_date, pathogen)
@@ -310,31 +324,52 @@ export_metadata <- function(results) {
     filter(!grepl("Mtb", anon_id, fixed = TRUE))%>%
     filter(!( !is.na(isolation_source) & isolation_source %in% excluded_sources ))
   
+  needed_input_cols <- c(
+    "flu_subtype",
+    "mosquito_species",
+    "county",
+    "state",
+    "country",
+    "src_table"
+  )
+  
+  missing_input_cols <- setdiff(
+    needed_input_cols,
+    names(results_filtered)
+  )
+  
+  for (col in missing_input_cols) {
+    results_filtered[[col]] <- NA_character_
+  }
+  
   final <- results_filtered %>%
     select(-wa_id) %>%
     rename( `bs-strain` = anon_id) %>%
     mutate(
       bioproject = dplyr::case_when(
-        descriptor_norm %in% c("InfluenzaA", "InfA", "IfnA") ~ bioproject_map[["flu_a"]],
-        descriptor_norm %in% c("InfluenzaB", "InfB", "IfnB") ~ bioproject_map[["flu_b"]],
-        descriptor_norm %in% c("Measles", "MeV") ~ bioproject_map[["measles"]],
-        descriptor_norm %in% c("SARS-CoV-2") ~ bioproject_map[["cov2"]],
-        descriptor_norm %in% c("WNV") ~ bioproject_map[["wnv"]],
+        stringr::str_detect(pathogen, fixed("Alphainfluenzavirus influenzae", ignore_case = TRUE)) ~ bioproject_map[["flu_a"]],
+        stringr::str_detect(pathogen, fixed("Betainfluenzavirus influenzae", ignore_case = TRUE)) ~ bioproject_map[["flu_b"]],
+        stringr::str_detect(pathogen, fixed("Morbillivirus hominis", ignore_case = TRUE)) ~ bioproject_map[["measles"]],
+        stringr::str_detect(pathogen, fixed("SARS-CoV-2", ignore_case = TRUE)) ~ bioproject_map[["cov2"]],
+        stringr::str_detect(pathogen, fixed("Orthoflavivirus nilense", ignore_case = TRUE)) ~ bioproject_map[["wnv"]],
         TRUE ~ NA_character_
       ),
       authors = "Dykema,P.; Hanson,N.;Yang,Q.;Lucas,D.;Grimmet Jr,S.;Johnson,J.;Waterman,K.",
       organism = dplyr::case_when(
-        # Influenza A
-        stringr::str_detect(stringr::str_to_lower(pathogen), "infa|influenzaa|influenza a") ~ 
-          "influenza a virus",
+        stringr::str_detect(
+          pathogen,
+          fixed("Alphainfluenzavirus influenzae", ignore_case = TRUE)
+        ) ~ "Influenza A virus",
         
-        # Influenza B
-        stringr::str_detect(stringr::str_to_lower(pathogen), "infb|influenza b") ~ 
-          "influenza b virus",
+        stringr::str_detect(
+          pathogen,
+          fixed("Betainfluenzavirus influenzae", ignore_case = TRUE)
+        ) ~ "Influenza B virus",
         
-        # Measles
-        stringr::str_detect(stringr::str_to_lower(pathogen), "measles|mev") ~ 
-          "Measles morbillivirus",
+        stringr::str_detect(
+          pathogen,
+          fixed("Morbillivirus hominis", ignore_case = TRUE)
+        ) ~ "Measles morbillivirus",
         
         TRUE ~ NA_character_
       ),
@@ -343,7 +378,7 @@ export_metadata <- function(results) {
         flu_subtype,
         NA_character_
       ),
-      `bs-subtype` = dplyr::if_else(
+       `bs-subtype` = dplyr::if_else(
         stringr::str_detect(stringr::str_to_lower(pathogen), "influenza"),
         flu_subtype,
         NA_character_
@@ -396,7 +431,7 @@ export_metadata <- function(results) {
       illumina_sra_file_path2 = ""
     ) %>%
 
-    dplyr::select(-county, -state, -country, -src_table, -mosquito_species, -descriptor_norm)
+    dplyr::select(-county, -state, -country, -src_table, -mosquito_species)
   
   # convert any list-columns to semicolon-separated strings 
   final <- final %>%
@@ -407,7 +442,7 @@ export_metadata <- function(results) {
   
   #export schema 
   keep_cols <- c(
-    "collection_date","flu_subtype","bs-strain", "ncbi_bioproject", "authors", "organism",
+    "collection_date","bs-strain", "bioproject","flu_subtype", "authors", "organism",
     "src-Serotype", "bs-subtype", "gb-sample_name", "src-geo_loc_name", "src-Host",
     "src-Strain", "bs-isolate", "src-Isolate", "src-Isolation_source",
     "bs-sample_title", "bs-collected_by", "bs-geo_loc_name", "bs-host", "sequence_name",
