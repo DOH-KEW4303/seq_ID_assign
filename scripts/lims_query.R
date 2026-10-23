@@ -52,12 +52,18 @@ standardize_summary <- function(df) {
         pathogen = gambit_predicted_taxon
       )
     
-  } else if (all(c("id", "species") %in% names(df))) {
+  } else if (
+    any(c("species", "Species") %in% names(df)) &&
+    any(c("id", "ID") %in% names(df))
+  ) {
+    
+    id_col <- intersect(c("id", "ID"), names(df))[1]
+    species_col <- intersect(c("species", "Species"), names(df))[1]
     
     out <- df %>%
       transmute(
-        wa_id = str_extract(id, "WA\\d+"),
-        pathogen = species
+        wa_id = str_extract(.data[[id_col]], "WA\\d+"),
+        pathogen = .data[[species_col]]
       )
     
   } else {
