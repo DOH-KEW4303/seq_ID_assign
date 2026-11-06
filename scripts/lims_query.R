@@ -111,42 +111,9 @@ ids_norm <- sample_pathogen.df %>%
 
 print(sample_pathogen.df)
 
-# Connect to DuckDB and fetch existing wa_ids
-run_env <- Sys.getenv("RUN_ENV", unset = "DEV")
-db_path <- if (run_env == "PROD") {
-  Sys.getenv("DUCKDB_PATH_PROD")
-} else {
-  Sys.getenv("DUCKDB_PATH_DEV")
-}
-
-message("RUN_ENV: ", run_env)
-message("DuckDB path: ", db_path)
-
-con_duck <- DBI::dbConnect(
-  duckdb::duckdb(),
-  dbdir = db_path,
-  read_only = TRUE
-)
-
-message("DuckDB valid: ", DBI::dbIsValid(con_duck))
-
-existing_wa <- DBI::dbGetQuery(
-  con_duck,
-  "SELECT wa_id FROM anon_ids"
-) %>%
-  mutate(wa_id = norm_id(wa_id)) %>%
-  distinct()
-
-DBI::dbDisconnect(con_duck)
-                  
-# Keep only WA IDs not already in duckdb
-ids_norm_new <- ids_norm %>%
-  anti_join(existing_wa, by = c("id_norm" = "wa_id"))
-
-message("Total WA IDs in binfx results: ", nrow(ids_norm))
-message("New WA IDs not in DuckDB: ", nrow(ids_norm_new))
-
-ids_norm <- ids_norm_new
+# Process all WA IDs from the BinFX summaries,
+# including IDs that already exist in DuckDB so complete metadata can be pulled
+message("Total WA IDs to process: ", nrow(ids_norm))
 
 # Connection to lims 
 lims_con <- DBI::dbConnect(odbc::odbc(),
@@ -164,7 +131,8 @@ lims_con <- DBI::dbConnect(odbc::odbc(),
 # Create temp table of IDs (best for many IDs)
 DBI::dbExecute(lims_con, "IF OBJECT_ID('tempdb..#ids') IS NOT NULL DROP TABLE #ids;")
 DBI::dbExecute(lims_con, "CREATE TABLE #ids (id_norm varchar(64) NOT NULL);")
-DBI::dbWriteTable(lims_con, "#ids", ids_norm_new, append = TRUE, temporary = TRUE)
+DBI::dbWriteTable(lims_con, "#ids", ids_norm,
+                  append = TRUE, temporary = TRUE)
 DBI::dbExecute(lims_con, "CREATE CLUSTERED INDEX IX_ids ON #ids(id_norm);")
 
 
@@ -384,7 +352,7 @@ res <- res %>%
   mutate(submitter_full_address = na_if(submitter_full_address, ""))
 
 # Join back pathogen and rename 
-results <- ids_norm_new %>%
+results <- ids_norm %>%
   left_join(res, by = c("id_norm" = "query_id")) %>%
   left_join(sample_pathogen.df %>% transmute(id_norm = norm_id(wa_id), pathogen),
             by = "id_norm") %>%
